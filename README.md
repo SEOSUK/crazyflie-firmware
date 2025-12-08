@@ -1,3 +1,11 @@
+## Status:
+Updating Wrench Estimator and Force Controller...
+
+## History:
+- Forked from upstream Bitcraze crazyflie-firmware on 2025-12-08
+- FlyingPen branch under active development
+
+
 # Crazyflie Firmware  [![CI](https://github.com/bitcraze/crazyflie-firmware/workflows/CI/badge.svg)](https://github.com/bitcraze/crazyflie-firmware/actions?query=workflow%3ACI)
 
 This project contains the source code for the firmware used in the Crazyflie range of platforms, including the Crazyflie 2.x and the Roadrunner.
