@@ -56,6 +56,15 @@
 #include "statsCnt.h"
 #include "static_mem.h"
 #include "rateSupervisor.h"
+#include "su_wrench_observer.h" // SEUK
+#include "su_wrench_dob_observer.h"   // 새로 만든 DOB
+#include "su_cmd_integrator.h" // SEUK
+#include "su_vel_from_pos.h"
+
+// wrench observer 속도
+#ifndef SU_WRENCH_RATE_HZ
+#define SU_WRENCH_RATE_HZ 250 
+#endif
 
 static bool isInit;
 
@@ -188,6 +197,11 @@ void stabilizerInit(StateEstimatorType estimator)
 
   STATIC_MEM_TASK_CREATE(stabilizerTask, stabilizerTask, STABILIZER_TASK_NAME, NULL, STABILIZER_TASK_PRI);
 
+  // MOBDOB Selection
+  suVelFromPosInit();  
+  suWrenchObserverInit(); // SEUK MOB
+  suWrenchObserverDOBInit(); // DOB
+
   isInit = true;
 }
 
@@ -307,6 +321,7 @@ static void stabilizerTask(void* param)
 
   systemWaitStart();
   DEBUG_PRINT("Starting stabilizer loop\n");
+  suCmdIntegratorInit();   // SEUK
   rateSupervisorInit(&rateSupervisorContext, xTaskGetTickCount(), M2T(1000), 997, 1003, 1);
   xRateSupervisorSemaphore = xSemaphoreCreateBinary();
   STATIC_MEM_TASK_CREATE(rateSupervisorTask, rateSupervisorTask, RATE_SUPERVISOR_TASK_NAME, NULL, RATE_SUPERVISOR_TASK_PRI);
@@ -325,6 +340,9 @@ static void stabilizerTask(void* param)
 
       stateEstimator(&state, stabilizerStep);
 
+    const float dt_main = 1.0f / 1000.0f;
+    suVelFromPosUpdate(&state, dt_main);
+
       const bool areMotorsAllowedToRun = supervisorAreMotorsAllowedToRun();
 
       // Critical for safety, be careful if you modify this code!
@@ -334,6 +352,18 @@ static void stabilizerTask(void* param)
         commanderSetSetpoint(&tempSetpoint, COMMANDER_PRIORITY_HIGHLEVEL);
       }
       commanderGetSetpoint(&setpoint, &state);
+
+    // 여기 추가: 1000 Hz로 vel/pos 통합 + 외란 힘 기반 admittance
+    float f_ext_world[3];
+
+    // MOBDOB Sellection
+    suWrenchObserverGetWorldForce(f_ext_world);  // su_wrench_observer에서 마지막 추정값 가져오기 MOBDOB
+    // suWrenchObserverDOBGetWorldForce(f_ext_world);
+    suCmdIntegratorUpdate(1.0f/1000.0f,
+                          &setpoint,
+                          &state,
+                          f_ext_world,          // ★ 힘 추정 전달
+                          &setpoint);
 
       // Critical for safety, be careful if you modify this code!
       // Let the supervisor update it's view of the current situation
@@ -354,9 +384,24 @@ static void stabilizerTask(void* param)
         controlMotors(&control);
       } else {
         motorsStop();
+
+        motorPwm.motors.m1 = motorPwm.motors.m2 = 0; // SEUK 모터 멈췄을때 로그에서도 0 뜨게 하기 위함임
+        motorPwm.motors.m3 = motorPwm.motors.m4 = 0; // SEUK
       }
 
-      // Compute compressed log formats
+      // wrench observer랑 wrench observer dob랑 둘 중에 하나만 켜라 !!!!
+      // Run the wrench observer at ~250 Hz (decimated from 1 kHz loop)
+      // MOBDOB Selection
+      
+      if (RATE_DO_EXECUTE(RATE_250_HZ, stabilizerStep)) {
+        float vW[3];
+        suVelFromPosGetWorld(vW);
+    
+        suWrenchObserverUpdate(&state, &motorPwm, &sensorData.gyro, vW);
+        suWrenchObserverDOBUpdate(&state, &motorPwm, &sensorData.gyro, vW);
+      }      // Compute compressed log formats
+      
+
       compressState();
       compressSetpoint();
 
@@ -422,6 +467,8 @@ LOG_ADD_CORE(LOG_FLOAT, y, &setpoint.position.y)
  */
 LOG_ADD_CORE(LOG_FLOAT, z, &setpoint.position.z)
 
+// 추가했음
+LOG_ADD_CORE(LOG_FLOAT, yaw_sp, &setpoint.attitude.yaw)  // ★ 추가
 /**
  * @brief Desired velocity X [m/s]
  */
