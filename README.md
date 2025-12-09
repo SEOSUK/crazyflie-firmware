@@ -1,5 +1,5 @@
 ## Status:
-Updating Wrench Estimator and Force Controller...
+Acceleration bias and slow attitude recovery fix required
 
 ## History:
 - Forked from upstream Bitcraze crazyflie-firmware on 2025-12-08
