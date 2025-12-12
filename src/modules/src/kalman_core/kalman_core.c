@@ -110,6 +110,139 @@ static void assertStateNotNaN(const kalmanCoreData_t* this)
 #endif
 
 
+// SEUK
+// -------------------- Complementary attitude filter (quaternion) --------------------
+
+#define COMP_EPS          (1e-6f)
+#define COMP_ACC_MIN_NORM (0.3f)    // 너무 작은 acc 는 free-fall로 보고 무시
+#define COMP_ACC_MAX_NORM (2.0f)    // 너무 큰 acc 는 contact 등으로 보고 무시
+#define COMP_KP           (1.0f)    // roll/pitch correction gain (필요하면 param 화 가능)
+
+// q 정규화
+static void quatNormalize(float q[4])
+{
+  float n = arm_sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) + COMP_EPS;
+  q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n;
+}
+
+// q ← q ⊗ δq(gyro*dt)
+static void quatIntegrateGyro(float q[4], const Axis3f* gyro, float dt)
+{
+  float dtwx = dt * gyro->x;
+  float dtwy = dt * gyro->y;
+  float dtwz = dt * gyro->z;
+
+  float angle = arm_sqrt(dtwx*dtwx + dtwy*dtwy + dtwz*dtwz) + COMP_EPS;
+  float ca = arm_cos_f32(angle * 0.5f);
+  float sa = arm_sin_f32(angle * 0.5f);
+  float dq[4] = { ca, sa*dtwx/angle, sa*dtwy/angle, sa*dtwz/angle };
+
+  float q0 = dq[0]*q[0] - dq[1]*q[1] - dq[2]*q[2] - dq[3]*q[3];
+  float q1 = dq[1]*q[0] + dq[0]*q[1] + dq[3]*q[2] - dq[2]*q[3];
+  float q2 = dq[2]*q[0] - dq[3]*q[1] + dq[0]*q[2] + dq[1]*q[3];
+  float q3 = dq[3]*q[0] + dq[2]*q[1] - dq[1]*q[2] + dq[0]*q[3];
+
+  q[0] = q0; q[1] = q1; q[2] = q2; q[3] = q3;
+  quatNormalize(q);
+}
+
+// q에서 world z=[0,0,1] 을 body frame으로 돌린 값 (중력 방향 예측)
+static void quatToBodyZ(const float q[4], float g_est[3])
+{
+  float qw = q[0], qx = q[1], qy = q[2], qz = q[3];
+
+  float R02 = 2.0f*qx*qz + 2.0f*qw*qy;
+  float R12 = 2.0f*qy*qz - 2.0f*qw*qx;
+  float R22 = qw*qw - qx*qx - qy*qy + qz*qz;
+
+  g_est[0] = R02;
+  g_est[1] = R12;
+  g_est[2] = R22;
+}
+
+// complementary attitude 업데이트 (qComp 사용)
+static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const Axis3f* gyro, float dt)
+{
+  if (dt <= 0.0f) {
+    return;
+  }
+
+  // 1) gyro 기반 예측
+  quatIntegrateGyro(this->qComp, gyro, dt);
+
+  // 2) acc norm 체크
+  float ax = acc->x;
+  float ay = acc->y;
+  float az = acc->z;
+  float an = arm_sqrt(ax*ax + ay*ay + az*az);
+
+  if (an < COMP_ACC_MIN_NORM || an > COMP_ACC_MAX_NORM) {
+    // free-fall or 심한 contact → acc로 attitude 보정하지 않음
+    return;
+  }
+
+  // 3) 측정된 gravity 방향 (body frame, 길이 1)
+  float g_meas[3] = { -ax/an, -ay/an, -az/an }; // acc ≈ g + a_body → gravity ≈ -acc
+
+  // 4) 현재 attitude 에서 예측되는 gravity 방향
+  float g_est[3];
+  quatToBodyZ(this->qComp, g_est);
+
+  // 5) cross(g_est, g_meas) → 회전 오차 축 (크기 ~ sin(theta))
+  float ex = g_est[1]*g_meas[2] - g_est[2]*g_meas[1];
+  float ey = g_est[2]*g_meas[0] - g_est[0]*g_meas[2];
+  float ez = g_est[0]*g_meas[1] - g_est[1]*g_meas[0];
+
+  // yaw는 acc로 보정하지 않도록 z 성분 제거 (roll/pitch만)
+  ez = 0.0f;
+
+  // 6) 작은 회전량 (Rodrigues vector) = Kp * error * dt
+  float k = COMP_KP * dt;
+  float rx = k * ex;
+  float ry = k * ey;
+  float rz = k * ez;
+
+  float angle = arm_sqrt(rx*rx + ry*ry + rz*rz);
+  if (angle > 1e-6f) {
+    float ca = arm_cos_f32(angle * 0.5f);
+    float sa = arm_sin_f32(angle * 0.5f);
+    float dq[4] = { ca, sa*rx/angle, sa*ry/angle, sa*rz/angle };
+
+    float q0 = dq[0]*this->qComp[0] - dq[1]*this->qComp[1] - dq[2]*this->qComp[2] - dq[3]*this->qComp[3];
+    float q1 = dq[1]*this->qComp[0] + dq[0]*this->qComp[1] + dq[3]*this->qComp[2] - dq[2]*this->qComp[3];
+    float q2 = dq[2]*this->qComp[0] - dq[3]*this->qComp[1] + dq[0]*this->qComp[2] + dq[1]*this->qComp[3];
+    float q3 = dq[3]*this->qComp[0] + dq[2]*this->qComp[1] - dq[1]*this->qComp[2] + dq[0]*this->qComp[3];
+
+    this->qComp[0] = q0;
+    this->qComp[1] = q1;
+    this->qComp[2] = q2;
+    this->qComp[3] = q3;
+
+    quatNormalize(this->qComp);
+  }
+}
+
+// API 구현
+void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable)
+{
+  this->useComplementaryAttitudeOutput = enable;
+}
+
+void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable)
+{
+  this->slaveKalmanToComplementary = enable;
+}
+
+void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4])
+{
+  q_out[0] = this->qComp[0];
+  q_out[1] = this->qComp[1];
+  q_out[2] = this->qComp[2];
+  q_out[3] = this->qComp[3];
+}
+// ----------------------------------------------------------------------
+
+
 // The bounds on the covariance, these shouldn't be hit, but sometimes are... why?
 #define MAX_COVARIANCE (100)
 #define MIN_COVARIANCE (1e-6f)
@@ -146,6 +279,14 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   this->initialQuaternion[2] = 0.0;
   this->initialQuaternion[3] = arm_sin_f32(params->initialYaw / 2);
   for (int i = 0; i < 4; i++) { this->q[i] = this->initialQuaternion[i]; }
+
+  // SEUK
+  // --- complementary attitude도 동일하게 시작 ---
+  for (int i = 0; i < 4; i++) { this->qComp[i] = this->initialQuaternion[i]; }
+  this->lastCompUpdateMs = nowMs;
+  this->useComplementaryAttitudeOutput = false;
+  this->slaveKalmanToComplementary = false;
+  // ---------------------------------------------
 
   // then set the initial rotation matrix to the identity. This only affects
   // the first prediction step, since in the finalization, after shifting
@@ -544,10 +685,16 @@ static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, 
   this->isUpdated = true;
 }
 
-void kalmanCorePredict(kalmanCoreData_t* this, const kalmanCoreParams_t *params, Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying) {
+void kalmanCorePredict(kalmanCoreData_t* this, const kalmanCoreParams_t *params,
+                       Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying) {
   float dt = (nowMs - this->lastPredictionMs) / 1000.0f;
   predictDt(this, params, acc, gyro, dt, quadIsFlying);
   this->lastPredictionMs = nowMs;
+
+  // --- complementary attitude도 동일한 nowMs 기준으로 업데이트 ---
+  float dtComp = (nowMs - this->lastCompUpdateMs) / 1000.0f;
+  complementaryUpdate(this, acc, gyro, dtComp);
+  this->lastCompUpdateMs = nowMs;
 }
 
 
@@ -674,18 +821,31 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
     mat_mult(&tmpNN2m, &tmpNN1m, &this->Pm); //APA'
   }
 
+  // SEUK
   // convert the new attitude to a rotation matrix, such that we can rotate body-frame velocity and acc
-  this->R[0][0] = this->q[0] * this->q[0] + this->q[1] * this->q[1] - this->q[2] * this->q[2] - this->q[3] * this->q[3];
-  this->R[0][1] = 2 * this->q[1] * this->q[2] - 2 * this->q[0] * this->q[3];
-  this->R[0][2] = 2 * this->q[1] * this->q[3] + 2 * this->q[0] * this->q[2];
+  // slaveKalmanToComplementary 가 켜져 있으면 Kalman 내부 attitude도 complementary에 동기화
+  const float* qUse = this->slaveKalmanToComplementary ? this->qComp : this->q;
 
-  this->R[1][0] = 2 * this->q[1] * this->q[2] + 2 * this->q[0] * this->q[3];
-  this->R[1][1] = this->q[0] * this->q[0] - this->q[1] * this->q[1] + this->q[2] * this->q[2] - this->q[3] * this->q[3];
-  this->R[1][2] = 2 * this->q[2] * this->q[3] - 2 * this->q[0] * this->q[1];
+  if (this->slaveKalmanToComplementary) {
+    // Kalman 내부 q 도 complementary 로 덮어써서 다음 스텝에서 일관되게 사용
+    this->q[0] = this->qComp[0];
+    this->q[1] = this->qComp[1];
+    this->q[2] = this->qComp[2];
+    this->q[3] = this->qComp[3];
+  }
 
-  this->R[2][0] = 2 * this->q[1] * this->q[3] - 2 * this->q[0] * this->q[2];
-  this->R[2][1] = 2 * this->q[2] * this->q[3] + 2 * this->q[0] * this->q[1];
-  this->R[2][2] = this->q[0] * this->q[0] - this->q[1] * this->q[1] - this->q[2] * this->q[2] + this->q[3] * this->q[3];
+  this->R[0][0] = qUse[0] * qUse[0] + qUse[1] * qUse[1] - qUse[2] * qUse[2] - qUse[3] * qUse[3];
+  this->R[0][1] = 2 * qUse[1] * qUse[2] - 2 * qUse[0] * qUse[3];
+  this->R[0][2] = 2 * qUse[1] * qUse[3] + 2 * qUse[0] * qUse[2];
+
+  this->R[1][0] = 2 * qUse[1] * qUse[2] + 2 * qUse[0] * qUse[3];
+  this->R[1][1] = qUse[0] * qUse[0] - qUse[1] * qUse[1] + qUse[2] * qUse[2] - qUse[3] * qUse[3];
+  this->R[1][2] = 2 * qUse[2] * qUse[3] - 2 * qUse[0] * qUse[1];
+
+  this->R[2][0] = 2 * qUse[1] * qUse[3] - 2 * qUse[0] * qUse[2];
+  this->R[2][1] = 2 * qUse[2] * qUse[3] + 2 * qUse[0] * qUse[1];
+  this->R[2][2] = qUse[0] * qUse[0] - qUse[1] * qUse[1] - qUse[2] * qUse[2] + qUse[3] * qUse[3];
+
 
   // reset the attitude error
   this->S[KC_STATE_D0] = 0;
@@ -712,8 +872,27 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
   return true;
 }
 
+// SEUK
 void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, const Axis3f *acc)
 {
+  // 어떤 attitude를 controller에 내보낼지 결정
+  const float* qAtt = this->useComplementaryAttitudeOutput ? this->qComp : this->q;
+
+  // qAtt 로부터 회전행렬 R_att 계산 (출력용)
+  float qw = qAtt[0], qx = qAtt[1], qy = qAtt[2], qz = qAtt[3];
+
+  float R00 = qw*qw + qx*qx - qy*qy - qz*qz;
+  float R01 = 2 * qx*qy - 2 * qw*qz;
+  float R02 = 2 * qx*qz + 2 * qw*qy;
+
+  float R10 = 2 * qx*qy + 2 * qw*qz;
+  float R11 = qw*qw - qx*qx + qy*qy - qz*qz;
+  float R12 = 2 * qy*qz - 2 * qw*qx;
+
+  float R20 = 2 * qx*qz - 2 * qw*qy;
+  float R21 = 2 * qy*qz + 2 * qw*qx;
+  float R22 = qw*qw - qx*qx - qy*qy + qz*qz;
+
   // position state is already in world frame
   state->position = (point_t){
       .x = this->S[KC_STATE_X],
@@ -721,26 +900,26 @@ void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, co
       .z = this->S[KC_STATE_Z]
   };
 
-  // velocity is in body frame and needs to be rotated to world frame
+  // velocity is in body frame and needs to be rotated to world frame (출력용 R 사용)
   state->velocity = (velocity_t){
-      .x = this->R[0][0]*this->S[KC_STATE_PX] + this->R[0][1]*this->S[KC_STATE_PY] + this->R[0][2]*this->S[KC_STATE_PZ],
-      .y = this->R[1][0]*this->S[KC_STATE_PX] + this->R[1][1]*this->S[KC_STATE_PY] + this->R[1][2]*this->S[KC_STATE_PZ],
-      .z = this->R[2][0]*this->S[KC_STATE_PX] + this->R[2][1]*this->S[KC_STATE_PY] + this->R[2][2]*this->S[KC_STATE_PZ]
+      .x = R00*this->S[KC_STATE_PX] + R01*this->S[KC_STATE_PY] + R02*this->S[KC_STATE_PZ],
+      .y = R10*this->S[KC_STATE_PX] + R11*this->S[KC_STATE_PY] + R12*this->S[KC_STATE_PZ],
+      .z = R20*this->S[KC_STATE_PX] + R21*this->S[KC_STATE_PY] + R22*this->S[KC_STATE_PZ]
   };
 
   // Accelerometer measurements are in the body frame and need to be rotated to world frame.
   // Furthermore, the legacy code requires acc.z to be acceleration without gravity.
   // Finally, note that these accelerations are in Gs, and not in m/s^2, hence - 1 for removing gravity
   state->acc = (acc_t){
-      .x = this->R[0][0]*acc->x + this->R[0][1]*acc->y + this->R[0][2]*acc->z,
-      .y = this->R[1][0]*acc->x + this->R[1][1]*acc->y + this->R[1][2]*acc->z,
-      .z = this->R[2][0]*acc->x + this->R[2][1]*acc->y + this->R[2][2]*acc->z - 1
+      .x = R00*acc->x + R01*acc->y + R02*acc->z,
+      .y = R10*acc->x + R11*acc->y + R12*acc->z,
+      .z = R20*acc->x + R21*acc->y + R22*acc->z - 1
   };
 
-  // convert the new attitude into Euler YPR
-  float yaw = atan2f(2*(this->q[1]*this->q[2]+this->q[0]*this->q[3]) , this->q[0]*this->q[0] + this->q[1]*this->q[1] - this->q[2]*this->q[2] - this->q[3]*this->q[3]);
-  float pitch = asinf(-2*(this->q[1]*this->q[3] - this->q[0]*this->q[2]));
-  float roll = atan2f(2*(this->q[2]*this->q[3]+this->q[0]*this->q[1]) , this->q[0]*this->q[0] - this->q[1]*this->q[1] - this->q[2]*this->q[2] + this->q[3]*this->q[3]);
+  // convert the new attitude into Euler YPR from qAtt
+  float yaw = atan2f(2*(qx*qy+qw*qz) , qw*qw + qx*qx - qy*qy - qz*qz);
+  float pitch = asinf(-2*(qx*qz - qw*qy));
+  float roll = atan2f(2*(qy*qz+qw*qx) , qw*qw - qx*qx - qy*qy + qz*qz);
 
   // Save attitude, adjusted for the legacy CF2 body coordinate system
   state->attitude = (attitude_t){
@@ -749,13 +928,12 @@ void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, co
       .yaw = yaw*RAD_TO_DEG
   };
 
-  // Save quaternion, hopefully one day this could be used in a better controller.
-  // Note that this is not adjusted for the legacy coordinate system
+  // Save quaternion (출력용 qAtt)
   state->attitudeQuaternion = (quaternion_t){
-      .w = this->q[0],
-      .x = this->q[1],
-      .y = this->q[2],
-      .z = this->q[3]
+      .w = qAtt[0],
+      .x = qAtt[1],
+      .y = qAtt[2],
+      .z = qAtt[3]
   };
 
   assertStateNotNaN(this);

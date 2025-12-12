@@ -141,6 +141,14 @@ static bool robustTdoa = false;
 
 NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 
+// SEUK
+// --- 여기 추가 ---
+// Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
+static uint8_t useCompAttOutParam = 0;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
+static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
+// ---------------
+
+
 /**
  * Internal variables. Note that static declaration results in default initialization (to 0)
  */
@@ -224,6 +232,13 @@ static void kalmanTask(void* parameters) {
   while (true) {
     xSemaphoreTake(runTaskSemaphore, portMAX_DELAY);
     nowMs = T2M(xTaskGetTickCount()); // would be nice if this had a precision higher than 1ms...
+
+
+    // --- param 값을 coreData 플래그에 반영 ---
+    kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
+    kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
+    // ----------------------------------------
+
 
     if (resetEstimation) {
       estimatorKalmanInit();
@@ -387,6 +402,11 @@ void estimatorKalmanInit(void)
 
   uint32_t nowMs = T2M(xTaskGetTickCount());
   kalmanCoreInit(&coreData, &coreParams, nowMs);
+
+  // SEUK
+  // init 시에도 param과 core 플래그를 동기화
+  kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
+  kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));  
 }
 
 bool estimatorKalmanTest(void)
@@ -508,6 +528,34 @@ LOG_GROUP_START(kalman)
   * @brief Estimated Attitude quarternion z
   */
   LOG_ADD(LOG_FLOAT, q3, &coreData.q[3])
+
+// SEUK
+  /**
+  * @brief Complementary Attitude quaternion w
+  */
+  LOG_ADD(LOG_FLOAT, qComp0, &coreData.qComp[0])
+  /**
+  * @brief Complementary Attitude quaternion x
+  */
+  LOG_ADD(LOG_FLOAT, qComp1, &coreData.qComp[1])
+  /**
+  * @brief Complementary Attitude quaternion y
+  */
+  LOG_ADD(LOG_FLOAT, qComp2, &coreData.qComp[2])
+  /**
+  * @brief Complementary Attitude quaternion z
+  */
+  LOG_ADD(LOG_FLOAT, qComp3, &coreData.qComp[3])
+
+  /**
+  * @brief use complementary attitude for output (0: kalman, 1: complementary)
+  */
+  LOG_ADD(LOG_UINT8, useCompAttOut, &useCompAttOutParam)
+  /**
+  * @brief slave internal kalman attitude to complementary (0: off, 1: on)
+  */
+  LOG_ADD(LOG_UINT8, slaveAttToComp, &slaveAttToCompParam)  
+
   /**
   * @brief Statistics rate of update step
   */
@@ -591,4 +639,15 @@ PARAM_GROUP_START(kalman)
  * @brief Initial yaw after reset [rad]
  */
   PARAM_ADD_CORE(PARAM_FLOAT, initialYaw, &coreParams.initialYaw)
+
+  /**
+   * @brief Use complementary attitude for external output (0: Kalman, 1: Complementary)
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, useCompAttOut, &useCompAttOutParam)
+  /**
+   * @brief Slave internal Kalman attitude (q,R) to complementary (0: off, 1: on)
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
+  
+  
 PARAM_GROUP_STOP(kalman)

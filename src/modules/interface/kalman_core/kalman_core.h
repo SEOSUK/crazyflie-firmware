@@ -101,6 +101,16 @@ typedef struct {
 
   uint32_t lastPredictionMs;
   uint32_t lastProcessNoiseUpdateMs;
+
+  // ---- 여기부터 새로 추가 ---- SEUK
+  // Complementary attitude (quaternion, w,x,y,z)
+  float qComp[4];
+  uint32_t lastCompUpdateMs;
+
+  // Attitude 모드 플래그
+  bool useComplementaryAttitudeOutput;   // controller에 내보낼 때 complementary 쓸지 여부
+  bool slaveKalmanToComplementary;       // 내부 Kalman q/R도 complementary에 동기화할지 여부
+  // ---- 새로 추가 끝 ----
 } kalmanCoreData_t;
 
 // The parameters used by the filter
@@ -184,3 +194,8 @@ void kalmanCoreDecoupleXY(kalmanCoreData_t* this);
 void kalmanCoreScalarUpdate(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, float error, float stdMeasNoise);
 
 void kalmanCoreUpdateWithPKE(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, arm_matrix_instance_f32 *Km, arm_matrix_instance_f32 *P_w_m, float error);
+
+// SEUK
+void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable);
+void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable);
+void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]);
