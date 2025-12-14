@@ -80,8 +80,6 @@ typedef struct {
   float S[KC_STATE_DIM];
 
   // The quad's attitude as a quaternion (w,x,y,z)
-  // We store as a quaternion to allow easy normalization (in comparison to a rotation matrix),
-  // while also being robust against singularities (in comparison to euler angles)
   float q[4];
 
   // The quad's attitude as a rotation matrix (used by the prediction, updated by the finalization)
@@ -110,8 +108,12 @@ typedef struct {
   // Attitude 모드 플래그
   bool useComplementaryAttitudeOutput;   // controller에 내보낼 때 complementary 쓸지 여부
   bool slaveKalmanToComplementary;       // 내부 Kalman q/R도 complementary에 동기화할지 여부
+
+  // Complementary roll/pitch correction gain (KP)
+  float compKp;                          // <-- 이번에 param으로 뺄 값
   // ---- 새로 추가 끝 ----
 } kalmanCoreData_t;
+
 
 // The parameters used by the filter
 typedef struct {
@@ -136,27 +138,14 @@ typedef struct {
   float initialZ;
 
   // Initial yaw of the Crazyflie in radians.
-  // 0 --- facing positive X
-  // PI / 2 --- facing positive Y
-  // PI --- facing negative X
-  // 3 * PI / 2 --- facing negative Y
   float initialYaw;
 
   float attitudeReversion;
 } kalmanCoreParams_t;
 
+
 /**
  * @brief Initialize Kalman core parameters with default values
- *
- * This function exists primarily for Python bindings to initialize their own
- * kalmanCoreParams_t structs. In the firmware, default parameters are initialized
- * via a static initializer in estimator_kalman.c to avoid overwriting persistent
- * parameters loaded from storage.
- *
- * Default values are defined in kalman_core_params_defaults.h to maintain a
- * single source of truth.
- *
- * @param params Pointer to the parameter struct to initialize
  */
 void kalmanCoreDefaultParams(kalmanCoreParams_t *params);
 
@@ -164,29 +153,18 @@ void kalmanCoreDefaultParams(kalmanCoreParams_t *params);
 void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs);
 
 /*  - Measurement updates based on sensors */
-
-// Barometer
 void kalmanCoreUpdateWithBaro(kalmanCoreData_t *this, const kalmanCoreParams_t *params, float baroAsl, bool quadIsFlying);
 
 /**
  * Primary Kalman filter functions
- *
- * The filter progresses as:
- *  - Predicting the current state forward */
+ */
 void kalmanCorePredict(kalmanCoreData_t *this, const kalmanCoreParams_t *params, Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying);
 
 void kalmanCoreAddProcessNoise(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs);
 
-/**
- * @brief Finalization to incorporate attitude error into body attitude
- *
- * @param this Core data
- * @return true The state was finalized
- * @return false The state was not changed and did not require finalization
- */
 bool kalmanCoreFinalize(kalmanCoreData_t* this);
 
-/*  - Externalization to move the filter's internal state into the external state expected by other modules */
+/*  - Externalization */
 void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, const Axis3f *acc);
 
 void kalmanCoreDecoupleXY(kalmanCoreData_t* this);
@@ -195,7 +173,10 @@ void kalmanCoreScalarUpdate(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm,
 
 void kalmanCoreUpdateWithPKE(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, arm_matrix_instance_f32 *Km, arm_matrix_instance_f32 *P_w_m, float error);
 
-// SEUK
+
+// SEUK: attitude selection + complementary access + compKp
 void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable);
 void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable);
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]);
+
+void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);

@@ -162,7 +162,7 @@ static Axis3f gyroLatest;
 
 static OutlierFilterTdoaState_t outlierFilterTdoaState;
 static OutlierFilterLhState_t sweepOutlierFilterState;
-
+static float compKpParam = 1.0f;  // complementary roll/pitch correction gain
 
 // Indicates that the internal state is corrupt and should be reset
 bool resetEstimation = false;
@@ -213,7 +213,7 @@ void estimatorKalmanTaskInit() {
   dataMutex = xSemaphoreCreateMutexStatic(&dataMutexBuffer);
 
   STATIC_MEM_TASK_CREATE(kalmanTask, kalmanTask, KALMAN_TASK_NAME, NULL, KALMAN_TASK_PRI);
-
+  kalmanCoreSetCompKp(&coreData, compKpParam);
   isInit = true;
 }
 
@@ -237,6 +237,7 @@ static void kalmanTask(void* parameters) {
     // --- param 값을 coreData 플래그에 반영 ---
     kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
     kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
+    kalmanCoreSetCompKp(&coreData, compKpParam);
     // ----------------------------------------
 
 
@@ -649,5 +650,5 @@ PARAM_GROUP_START(kalman)
    */
   PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
   
-  
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
 PARAM_GROUP_STOP(kalman)

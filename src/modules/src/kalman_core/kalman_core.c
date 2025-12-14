@@ -114,9 +114,8 @@ static void assertStateNotNaN(const kalmanCoreData_t* this)
 // -------------------- Complementary attitude filter (quaternion) --------------------
 
 #define COMP_EPS          (1e-6f)
-#define COMP_ACC_MIN_NORM (0.3f)    // 너무 작은 acc 는 free-fall로 보고 무시
-#define COMP_ACC_MAX_NORM (2.0f)    // 너무 큰 acc 는 contact 등으로 보고 무시
-#define COMP_KP           (1.0f)    // roll/pitch correction gain (필요하면 param 화 가능)
+#define COMP_ACC_MIN_NORM (0.0f)    // 너무 작은 acc 는 free-fall로 보고 무시
+#define COMP_ACC_MAX_NORM (500.0f)    // 너무 큰 acc 는 contact 등으로 보고 무시 --> 안하겠다느 소리에 가깝긴 함
 
 // q 정규화
 static void quatNormalize(float q[4])
@@ -170,43 +169,53 @@ static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const
   // 1) gyro 기반 예측
   quatIntegrateGyro(this->qComp, gyro, dt);
 
-  // 2) acc norm 체크
-  float ax = acc->x;
-  float ay = acc->y;
-  float az = acc->z;
-  float an = arm_sqrt(ax*ax + ay*ay + az*az);
+  // 2) acc norm 체크 (NaN/Inf/0 방어 + 게이트)
+  const float ax = acc->x;
+  const float ay = acc->y;
+  const float az = acc->z;
 
+  const float an2 = ax*ax + ay*ay + az*az;
+
+  // NaN / Inf / 완전한 zero 방어
+  if (!isfinite(an2) || an2 < COMP_EPS) {
+    return;
+  }
+
+  // CMSIS 환경에서 가장 안전하게: arm_sqrt() 매크로(리턴 float) 사용
+  const float an = arm_sqrt(an2);
+
+  // 기존 게이트
   if (an < COMP_ACC_MIN_NORM || an > COMP_ACC_MAX_NORM) {
-    // free-fall or 심한 contact → acc로 attitude 보정하지 않음
     return;
   }
 
   // 3) 측정된 gravity 방향 (body frame, 길이 1)
-  float g_meas[3] = { -ax/an, -ay/an, -az/an }; // acc ≈ g + a_body → gravity ≈ -acc
+  const float inv_an = 1.0f / an;
+  float g_meas[3] = { -ax * inv_an, -ay * inv_an, -az * inv_an }; // gravity ≈ -acc
 
   // 4) 현재 attitude 에서 예측되는 gravity 방향
   float g_est[3];
   quatToBodyZ(this->qComp, g_est);
 
-  // 5) cross(g_est, g_meas) → 회전 오차 축 (크기 ~ sin(theta))
+  // 5) cross(g_est, g_meas) → 회전 오차 축
   float ex = g_est[1]*g_meas[2] - g_est[2]*g_meas[1];
   float ey = g_est[2]*g_meas[0] - g_est[0]*g_meas[2];
-  float ez = g_est[0]*g_meas[1] - g_est[1]*g_meas[0];
-
-  // yaw는 acc로 보정하지 않도록 z 성분 제거 (roll/pitch만)
-  ez = 0.0f;
+  float ez = 0.0f; // yaw는 acc로 보정하지 않음
 
   // 6) 작은 회전량 (Rodrigues vector) = Kp * error * dt
-  float k = COMP_KP * dt;
-  float rx = k * ex;
-  float ry = k * ey;
-  float rz = k * ez;
+  const float k = this->compKp * dt;
+  const float rx = k * ex;
+  const float ry = k * ey;
+  const float rz = k * ez;
 
-  float angle = arm_sqrt(rx*rx + ry*ry + rz*rz);
-  if (angle > 1e-6f) {
-    float ca = arm_cos_f32(angle * 0.5f);
-    float sa = arm_sin_f32(angle * 0.5f);
-    float dq[4] = { ca, sa*rx/angle, sa*ry/angle, sa*rz/angle };
+  const float angle2 = rx*rx + ry*ry + rz*rz;
+  if (angle2 > 1e-12f) {
+    const float angle = arm_sqrt(angle2);
+    const float ca = arm_cos_f32(angle * 0.5f);
+    const float sa = arm_sin_f32(angle * 0.5f);
+
+    const float inv_angle = 1.0f / angle;
+    const float dq[4] = { ca, sa*rx*inv_angle, sa*ry*inv_angle, sa*rz*inv_angle };
 
     float q0 = dq[0]*this->qComp[0] - dq[1]*this->qComp[1] - dq[2]*this->qComp[2] - dq[3]*this->qComp[3];
     float q1 = dq[1]*this->qComp[0] + dq[0]*this->qComp[1] + dq[3]*this->qComp[2] - dq[2]*this->qComp[3];
@@ -222,6 +231,7 @@ static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const
   }
 }
 
+
 // API 구현
 void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable)
 {
@@ -232,6 +242,19 @@ void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enab
 {
   this->slaveKalmanToComplementary = enable;
 }
+
+void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp)
+{
+  // 안전장치: 음수/너무 큰 값 방지 (원하면 범위 조절)
+  if (kp < 0.0f) {
+    kp = 0.0f;
+  }
+  if (kp > 50.0f) {
+    kp = 50.0f;
+  }
+  this->compKp = kp;
+}
+
 
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4])
 {
@@ -286,6 +309,7 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   this->lastCompUpdateMs = nowMs;
   this->useComplementaryAttitudeOutput = false;
   this->slaveKalmanToComplementary = false;
+  this->compKp = 1.0f;
   // ---------------------------------------------
 
   // then set the initial rotation matrix to the identity. This only affects
