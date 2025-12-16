@@ -163,6 +163,7 @@ static Axis3f gyroLatest;
 static OutlierFilterTdoaState_t outlierFilterTdoaState;
 static OutlierFilterLhState_t sweepOutlierFilterState;
 static float compKpParam = 1.0f;  // complementary roll/pitch correction gain
+static float compKiParam = 0.1f;  // NEW
 
 // Indicates that the internal state is corrupt and should be reset
 bool resetEstimation = false;
@@ -214,6 +215,7 @@ void estimatorKalmanTaskInit() {
 
   STATIC_MEM_TASK_CREATE(kalmanTask, kalmanTask, KALMAN_TASK_NAME, NULL, KALMAN_TASK_PRI);
   kalmanCoreSetCompKp(&coreData, compKpParam);
+  kalmanCoreSetCompKi(&coreData, compKiParam); // NEW  
   isInit = true;
 }
 
@@ -238,6 +240,8 @@ static void kalmanTask(void* parameters) {
     kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
     kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
     kalmanCoreSetCompKp(&coreData, compKpParam);
+    kalmanCoreSetCompKi(&coreData, compKiParam);   // <-- 이거 추가 (중요)    
+    
     // ----------------------------------------
 
 
@@ -557,6 +561,9 @@ LOG_GROUP_START(kalman)
   */
   LOG_ADD(LOG_UINT8, slaveAttToComp, &slaveAttToCompParam)  
 
+  LOG_ADD(LOG_FLOAT, compBiasX, &coreData.compGyroBias[0])
+  LOG_ADD(LOG_FLOAT, compBiasY, &coreData.compGyroBias[1])
+  LOG_ADD(LOG_FLOAT, compBiasZ, &coreData.compGyroBias[2])
   /**
   * @brief Statistics rate of update step
   */
@@ -569,6 +576,8 @@ LOG_GROUP_START(kalman)
   * @brief Statistics rate full estimation step
   */
   STATS_CNT_RATE_LOG_ADD(rtFinal, &finalizeCounter)
+
+  
 LOG_GROUP_STOP(kalman)
 
 LOG_GROUP_START(outlierf)
@@ -651,4 +660,7 @@ PARAM_GROUP_START(kalman)
   PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
   
   PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
+
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKi, &compKiParam) // NEW  
+
 PARAM_GROUP_STOP(kalman)

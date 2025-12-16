@@ -111,6 +111,8 @@ typedef struct {
 
   // Complementary roll/pitch correction gain (KP)
   float compKp;                          // <-- 이번에 param으로 뺄 값
+  float compKi;          // NEW
+  float compGyroBias[3]; // NEW (rad/s), x,y,z  
   // ---- 새로 추가 끝 ----
 } kalmanCoreData_t;
 
@@ -180,3 +182,4 @@ void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enab
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]);
 
 void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);
+void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki);

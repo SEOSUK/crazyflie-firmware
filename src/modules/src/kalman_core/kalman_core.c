@@ -114,8 +114,8 @@ static void assertStateNotNaN(const kalmanCoreData_t* this)
 // -------------------- Complementary attitude filter (quaternion) --------------------
 
 #define COMP_EPS          (1e-6f)
-#define COMP_ACC_MIN_NORM (0.0f)    // 너무 작은 acc 는 free-fall로 보고 무시
-#define COMP_ACC_MAX_NORM (500.0f)    // 너무 큰 acc 는 contact 등으로 보고 무시 --> 안하겠다느 소리에 가깝긴 함
+#define COMP_ACC_MIN_NORM (0.7f)   // acc가 G 단위라면 1 근처가 정상(정지/준정적)
+#define COMP_ACC_MAX_NORM (1.3f)
 
 // q 정규화
 static void quatNormalize(float q[4])
@@ -145,91 +145,91 @@ static void quatIntegrateGyro(float q[4], const Axis3f* gyro, float dt)
   quatNormalize(q);
 }
 
-// q에서 world z=[0,0,1] 을 body frame으로 돌린 값 (중력 방향 예측)
+// q (body->world)에서 world z=[0,0,1]을 body frame으로 표현한 값: g_est = R^T * e3
 static void quatToBodyZ(const float q[4], float g_est[3])
 {
-  float qw = q[0], qx = q[1], qy = q[2], qz = q[3];
+  const float qw = q[0], qx = q[1], qy = q[2], qz = q[3];
 
-  float R02 = 2.0f*qx*qz + 2.0f*qw*qy;
-  float R12 = 2.0f*qy*qz - 2.0f*qw*qx;
-  float R22 = qw*qw - qx*qx - qy*qy + qz*qz;
+  // R20, R21, R22 (3rd row)
+  const float R20 = 2.0f*qx*qz - 2.0f*qw*qy;
+  const float R21 = 2.0f*qy*qz + 2.0f*qw*qx;
+  const float R22 = qw*qw - qx*qx - qy*qy + qz*qz;
 
-  g_est[0] = R02;
-  g_est[1] = R12;
+  g_est[0] = R20;
+  g_est[1] = R21;
   g_est[2] = R22;
 }
 
-// complementary attitude 업데이트 (qComp 사용)
-static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const Axis3f* gyro, float dt)
+
+
+
+static void complementaryUpdate(kalmanCoreData_t* this,
+                                const Axis3f* acc,
+                                const Axis3f* gyro,
+                                float dt)
 {
   if (dt <= 0.0f) {
     return;
   }
 
-  // 1) gyro 기반 예측
-  quatIntegrateGyro(this->qComp, gyro, dt);
-
-  // 2) acc norm 체크 (NaN/Inf/0 방어 + 게이트)
-  const float ax = acc->x;
-  const float ay = acc->y;
-  const float az = acc->z;
-
+  // 1) acc norm 체크 (NaN/Inf/0 방어 + 게이트)
+  const float ax = acc->x, ay = acc->y, az = acc->z;
   const float an2 = ax*ax + ay*ay + az*az;
-
-  // NaN / Inf / 완전한 zero 방어
   if (!isfinite(an2) || an2 < COMP_EPS) {
+    Axis3f omegaOnly;
+    omegaOnly.x = gyro->x - this->compGyroBias[0];
+    omegaOnly.y = gyro->y - this->compGyroBias[1];
+    omegaOnly.z = gyro->z - this->compGyroBias[2];
+    quatIntegrateGyro(this->qComp, &omegaOnly, dt);
     return;
   }
 
-  // CMSIS 환경에서 가장 안전하게: arm_sqrt() 매크로(리턴 float) 사용
-  const float an = arm_sqrt(an2);
+  float an = 0.0f;
+  arm_sqrt_f32(an2, &an);
 
-  // 기존 게이트
-  if (an < COMP_ACC_MIN_NORM || an > COMP_ACC_MAX_NORM) {
-    return;
+  const bool accOk = (an >= COMP_ACC_MIN_NORM && an <= COMP_ACC_MAX_NORM);
+
+  // 2) 측정 중력방향 (body frame, unit): gravity ≈ -acc
+  float g_meas[3] = {0.0f, 0.0f, 0.0f};
+  if (accOk) {
+    const float inv_an = 1.0f / an;
+    g_meas[0] = -ax * inv_an;
+    g_meas[1] = -ay * inv_an;
+    g_meas[2] = -az * inv_an;
   }
 
-  // 3) 측정된 gravity 방향 (body frame, 길이 1)
-  const float inv_an = 1.0f / an;
-  float g_meas[3] = { -ax * inv_an, -ay * inv_an, -az * inv_an }; // gravity ≈ -acc
-
-  // 4) 현재 attitude 에서 예측되는 gravity 방향
+  // 3) 현재 qComp로부터 예측 중력방향 (body frame): g_est = R^T * e3
   float g_est[3];
   quatToBodyZ(this->qComp, g_est);
 
-  // 5) cross(g_est, g_meas) → 회전 오차 축
-  float ex = g_est[1]*g_meas[2] - g_est[2]*g_meas[1];
-  float ey = g_est[2]*g_meas[0] - g_est[0]*g_meas[2];
-  float ez = 0.0f; // yaw는 acc로 보정하지 않음
-
-  // 6) 작은 회전량 (Rodrigues vector) = Kp * error * dt
-  const float k = this->compKp * dt;
-  const float rx = k * ex;
-  const float ry = k * ey;
-  const float rz = k * ez;
-
-  const float angle2 = rx*rx + ry*ry + rz*rz;
-  if (angle2 > 1e-12f) {
-    const float angle = arm_sqrt(angle2);
-    const float ca = arm_cos_f32(angle * 0.5f);
-    const float sa = arm_sin_f32(angle * 0.5f);
-
-    const float inv_angle = 1.0f / angle;
-    const float dq[4] = { ca, sa*rx*inv_angle, sa*ry*inv_angle, sa*rz*inv_angle };
-
-    float q0 = dq[0]*this->qComp[0] - dq[1]*this->qComp[1] - dq[2]*this->qComp[2] - dq[3]*this->qComp[3];
-    float q1 = dq[1]*this->qComp[0] + dq[0]*this->qComp[1] + dq[3]*this->qComp[2] - dq[2]*this->qComp[3];
-    float q2 = dq[2]*this->qComp[0] - dq[3]*this->qComp[1] + dq[0]*this->qComp[2] + dq[1]*this->qComp[3];
-    float q3 = dq[3]*this->qComp[0] + dq[2]*this->qComp[1] - dq[1]*this->qComp[2] + dq[0]*this->qComp[3];
-
-    this->qComp[0] = q0;
-    this->qComp[1] = q1;
-    this->qComp[2] = q2;
-    this->qComp[3] = q3;
-
-    quatNormalize(this->qComp);
+  // 4) 오차 e = g_meas x g_est (측정 × 추정)
+  float ex = 0.0f, ey = 0.0f, ez = 0.0f;
+  if (accOk) {
+    ex = g_meas[1]*g_est[2] - g_meas[2]*g_est[1];
+    ey = g_meas[2]*g_est[0] - g_meas[0]*g_est[2];
+    ez = 0.0f; // yaw는 acc로 보정하지 않음
   }
+
+  // 5) bias 적분 (kI 항) - 게이트 통과시에만
+  if (accOk) {
+    this->compGyroBias[0] += this->compKi * ex * dt;
+    this->compGyroBias[1] += this->compKi * ey * dt;
+    // this->compGyroBias[2] += this->compKi * ez * dt; // 보통 끔
+  }
+
+  // 6) 보정된 각속도 omega_corr = gyro - bias + Kp*e
+  Axis3f omega;
+  omega.x = gyro->x - this->compGyroBias[0] + this->compKp * ex;
+  omega.y = gyro->y - this->compGyroBias[1] + this->compKp * ey;
+  omega.z = gyro->z - this->compGyroBias[2]; // yaw 보정항 0
+
+  // 7) 딱 1번만 적분
+  quatIntegrateGyro(this->qComp, &omega, dt);
 }
+
+
+
+
 
 
 // API 구현
@@ -255,6 +255,19 @@ void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp)
   this->compKp = kp;
 }
 
+void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki)
+{
+  if (ki < 0.0f) ki = 0.0f;
+  if (ki > 50.0f) ki = 50.0f;
+  this->compKi = ki;
+}
+
+void kalmanCoreResetCompGyroBias(kalmanCoreData_t* this)
+{
+  this->compGyroBias[0] = 0.0f;
+  this->compGyroBias[1] = 0.0f;
+  this->compGyroBias[2] = 0.0f;
+}
 
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4])
 {
@@ -310,6 +323,8 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   this->useComplementaryAttitudeOutput = false;
   this->slaveKalmanToComplementary = false;
   this->compKp = 1.0f;
+  this->compKi = 0.1f; // 기본값은 적당히 (나중에 파라미터로 튜닝)
+  this->compGyroBias[0] = this->compGyroBias[1] = this->compGyroBias[2] = 0.0f;  
   // ---------------------------------------------
 
   // then set the initial rotation matrix to the identity. This only affects
