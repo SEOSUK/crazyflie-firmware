@@ -323,11 +323,20 @@ static supervisorConditionBits_t updateAndPopulateConditions(SupervisorMem_t* th
     conditions |= SUPERVISOR_CB_ARMED;
   }
 
-  const bool isFlying = isFlyingCheck(this, currentTick);
-  if (isFlying) {
-    conditions |= SUPERVISOR_CB_IS_FLYING;
-  }
+  // const bool isFlying = isFlyingCheck(this, currentTick);
+  // if (isFlying) {
+  //   conditions |= SUPERVISOR_CB_IS_FLYING;
+  // }
+  //1222 isflying 실험
+static uint8_t forceIsFlying = 1;
 
+const bool isFlying = forceIsFlying ? true : isFlyingCheck(this, currentTick);
+if (isFlying) {
+  conditions |= SUPERVISOR_CB_IS_FLYING;
+}
+
+
+  
   const bool isTumbled = isTumbledCheck(this, sensors, currentTick);
   if (isTumbled) {
     if (tumbleCheckEnabled)
