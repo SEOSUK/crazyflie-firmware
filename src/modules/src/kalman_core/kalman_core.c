@@ -733,7 +733,7 @@ static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, 
   if (quadIsFlying) // only acceleration in z direction
   {
     // Use accelerometer and not commanded thrust, as this has proper physical units
-    zacc = 1;
+    zacc = acc->z;
 
     // position updates in the body frame (will be rotated to inertial frame)
     dx = this->S[KC_STATE_PX] * dt;
