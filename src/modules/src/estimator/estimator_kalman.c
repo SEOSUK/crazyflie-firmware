@@ -334,7 +334,19 @@ static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlyi
         }
         break;
       case MeasurementTypePosition:
-        kalmanCoreUpdateWithPosition(&coreData, &m.data.position);
+        {
+          // --- [Custom Patch] Disable attitude coupling from external position ---
+          kalmanCoreData_t coreDataCopy = coreData;
+          kalmanCoreUpdateWithPosition(&coreData, &m.data.position);
+          // attitude (quaternion) restore
+          for (int i = 0; i < 4; i++) {
+              coreData.q[i] = coreDataCopy.q[i];
+          }
+          // optional: attitude error (delta) restore
+          coreData.S[KC_STATE_D0] = coreDataCopy.S[KC_STATE_D0];
+          coreData.S[KC_STATE_D1] = coreDataCopy.S[KC_STATE_D1];
+          coreData.S[KC_STATE_D2] = coreDataCopy.S[KC_STATE_D2];
+        }
         break;
       case MeasurementTypePose:
         kalmanCoreUpdateWithPose(&coreData, &m.data.pose);

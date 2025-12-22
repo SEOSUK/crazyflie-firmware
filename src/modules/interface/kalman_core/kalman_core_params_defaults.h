@@ -79,4 +79,4 @@
   .initialYaw = 0.0, \
   \
   /* Roll/pitch/yaw zero reversion is on by default. Will be overridden by estimatorKalmanInit() if requested by the deck. */ \
-  .attitudeReversion = 0.001f
+  .attitudeReversion = 0.00f
