@@ -472,6 +472,115 @@ void kalmanCoreUpdateWithBaro(kalmanCoreData_t *this, const kalmanCoreParams_t *
   kalmanCoreScalarUpdate(this, &H, meas - this->S[KC_STATE_Z], params->measNoiseBaro);
 }
 
+// SEUK 1222
+// ===== NEW: masked scalar update =====
+static inline bool allowIdxFromGroups(uint32_t groups, int idx)
+{
+  switch (idx) {
+    case KC_STATE_X:
+    case KC_STATE_Y:
+    case KC_STATE_Z:
+      return (groups & KC_UPD_POS);
+
+    case KC_STATE_PX:
+    case KC_STATE_PY:
+    case KC_STATE_PZ:
+      return (groups & KC_UPD_VEL);
+
+    case KC_STATE_D0:
+    case KC_STATE_D1:
+    case KC_STATE_D2:
+      return (groups & KC_UPD_ATTERR);
+
+    default:
+      return true;
+  }
+}
+
+void kalmanCoreScalarUpdateMasked(kalmanCoreData_t* this,
+                                  arm_matrix_instance_f32 *Hm,
+                                  float error,
+                                  float stdMeasNoise,
+                                  uint32_t allowedGroups)
+{
+  // The Kalman gain as a column vector
+  NO_DMA_CCM_SAFE_ZERO_INIT static float K[KC_STATE_DIM];
+  static arm_matrix_instance_f32 Km = {KC_STATE_DIM, 1, (float *)K};
+
+  // Temporary matrices for the covariance updates
+  NO_DMA_CCM_SAFE_ZERO_INIT __attribute__((aligned(4))) static float tmpNN1d[KC_STATE_DIM * KC_STATE_DIM];
+  static arm_matrix_instance_f32 tmpNN1m = {KC_STATE_DIM, KC_STATE_DIM, tmpNN1d};
+
+  NO_DMA_CCM_SAFE_ZERO_INIT __attribute__((aligned(4))) static float tmpNN2d[KC_STATE_DIM * KC_STATE_DIM];
+  static arm_matrix_instance_f32 tmpNN2m = {KC_STATE_DIM, KC_STATE_DIM, tmpNN2d};
+
+  NO_DMA_CCM_SAFE_ZERO_INIT __attribute__((aligned(4))) static float tmpNN3d[KC_STATE_DIM * KC_STATE_DIM];
+  static arm_matrix_instance_f32 tmpNN3m = {KC_STATE_DIM, KC_STATE_DIM, tmpNN3d};
+
+  NO_DMA_CCM_SAFE_ZERO_INIT __attribute__((aligned(4))) static float HTd[KC_STATE_DIM * 1];
+  static arm_matrix_instance_f32 HTm = {KC_STATE_DIM, 1, HTd};
+
+  NO_DMA_CCM_SAFE_ZERO_INIT __attribute__((aligned(4))) static float PHTd[KC_STATE_DIM * 1];
+  static arm_matrix_instance_f32 PHTm = {KC_STATE_DIM, 1, PHTd};
+
+  ASSERT(Hm->numRows == 1);
+  ASSERT(Hm->numCols == KC_STATE_DIM);
+
+  // ====== INNOVATION COVARIANCE ======
+  mat_trans(Hm, &HTm);
+  mat_mult(&this->Pm, &HTm, &PHTm); // PH'
+  float R = stdMeasNoise * stdMeasNoise;
+  float HPHR = R; // HPH' + R
+  for (int i = 0; i < KC_STATE_DIM; i++) {
+    HPHR += Hm->pData[i] * PHTd[i];
+  }
+  ASSERT(!isnan(HPHR));
+
+  // ====== MEASUREMENT UPDATE (masked K) ======
+  for (int i = 0; i < KC_STATE_DIM; i++) {
+    float Ki = PHTd[i] / HPHR;
+
+    // Mask Kalman gain for disallowed states
+    if (!allowIdxFromGroups(allowedGroups, i)) {
+      Ki = 0.0f;
+    }
+
+    K[i] = Ki;
+    this->S[i] = this->S[i] + Ki * error;
+  }
+  assertStateNotNaN(this);
+
+  // ====== COVARIANCE UPDATE ======
+  mat_mult(&Km, Hm, &tmpNN1m); // KH
+  for (int i = 0; i < KC_STATE_DIM; i++) { tmpNN1d[KC_STATE_DIM*i+i] -= 1; } // KH - I
+  mat_trans(&tmpNN1m, &tmpNN2m); // (KH - I)'
+  mat_mult(&tmpNN1m, &this->Pm, &tmpNN3m); // (KH - I)*P
+  mat_mult(&tmpNN3m, &tmpNN2m, &this->Pm); // (KH - I)*P*(KH - I)'
+  assertStateNotNaN(this);
+
+  // add the measurement variance and ensure boundedness and symmetry
+  for (int i = 0; i < KC_STATE_DIM; i++) {
+    for (int j = i; j < KC_STATE_DIM; j++) {
+      float v = K[i] * R * K[j];
+      float p = 0.5f*this->P[i][j] + 0.5f*this->P[j][i] + v;
+      if (isnan(p) || p > MAX_COVARIANCE) {
+        this->P[i][j] = this->P[j][i] = MAX_COVARIANCE;
+      } else if (i == j && p < MIN_COVARIANCE) {
+        this->P[i][j] = this->P[j][i] = MIN_COVARIANCE;
+      } else {
+        this->P[i][j] = this->P[j][i] = p;
+      }
+    }
+  }
+
+  assertStateNotNaN(this);
+  this->isUpdated = true;
+}
+// ===== end masked scalar update =====
+
+
+
+
 static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, Axis3f *acc, Axis3f *gyro, float dt, bool quadIsFlying)
 {
   /* Here we discretize (euler forward) and linearise the quadrocopter dynamics in order

@@ -57,11 +57,16 @@
 
 #include "cf_math.h"
 #include "stabilizer_types.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 // Indexes to access the quad's state, stored as a column vector
 typedef enum
 {
-  KC_STATE_X, KC_STATE_Y, KC_STATE_Z, KC_STATE_PX, KC_STATE_PY, KC_STATE_PZ, KC_STATE_D0, KC_STATE_D1, KC_STATE_D2, KC_STATE_DIM
+  KC_STATE_X, KC_STATE_Y, KC_STATE_Z,
+  KC_STATE_PX, KC_STATE_PY, KC_STATE_PZ,
+  KC_STATE_D0, KC_STATE_D1, KC_STATE_D2,
+  KC_STATE_DIM
 } kalmanCoreStateIdx_t;
 
 
@@ -74,8 +79,6 @@ typedef struct {
    * - X, Y, Z: the quad's position in the global frame
    * - PX, PY, PZ: the quad's velocity in its body frame
    * - D0, D1, D2: attitude error
-   *
-   * For more information, refer to the paper
    */
   float S[KC_STATE_DIM];
 
@@ -100,24 +103,20 @@ typedef struct {
   uint32_t lastPredictionMs;
   uint32_t lastProcessNoiseUpdateMs;
 
-  // ---- 여기부터 새로 추가 ---- SEUK
-  // Complementary attitude (quaternion, w,x,y,z)
+  // ---- SEUK: Complementary attitude ----
   float qComp[4];
   uint32_t lastCompUpdateMs;
 
-  // Attitude 모드 플래그
-  bool useComplementaryAttitudeOutput;   // controller에 내보낼 때 complementary 쓸지 여부
-  bool slaveKalmanToComplementary;       // 내부 Kalman q/R도 complementary에 동기화할지 여부
+  bool useComplementaryAttitudeOutput;
+  bool slaveKalmanToComplementary;
 
-  // Complementary roll/pitch correction gain (KP)
-  float compKp;                          // <-- 이번에 param으로 뺄 값
-  // ---- 새로 추가 끝 ----
+  float compKp;
+  // ---- SEUK end ----
 } kalmanCoreData_t;
 
 
 // The parameters used by the filter
 typedef struct {
-  // Initial variances, uncertain of position, but know we're stationary and roughly flat
   float stdDevInitialPosition_xy;
   float stdDevInitialPosition_z;
   float stdDevInitialVelocity;
@@ -137,9 +136,7 @@ typedef struct {
   float initialY;
   float initialZ;
 
-  // Initial yaw of the Crazyflie in radians.
-  float initialYaw;
-
+  float initialYaw;      // rad
   float attitudeReversion;
 } kalmanCoreParams_t;
 
@@ -149,34 +146,56 @@ typedef struct {
  */
 void kalmanCoreDefaultParams(kalmanCoreParams_t *params);
 
-/*  - Initialize Kalman State */
+/* Initialize Kalman State */
 void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs);
 
-/*  - Measurement updates based on sensors */
+/* Measurement updates */
 void kalmanCoreUpdateWithBaro(kalmanCoreData_t *this, const kalmanCoreParams_t *params, float baroAsl, bool quadIsFlying);
 
-/**
- * Primary Kalman filter functions
- */
-void kalmanCorePredict(kalmanCoreData_t *this, const kalmanCoreParams_t *params, Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying);
+/* Primary KF */
+void kalmanCorePredict(kalmanCoreData_t *this, const kalmanCoreParams_t *params,
+                       Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying);
 
 void kalmanCoreAddProcessNoise(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs);
 
 bool kalmanCoreFinalize(kalmanCoreData_t* this);
 
-/*  - Externalization */
+/* Externalization */
 void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, const Axis3f *acc);
 
 void kalmanCoreDecoupleXY(kalmanCoreData_t* this);
 
+/* Scalar update */
 void kalmanCoreScalarUpdate(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, float error, float stdMeasNoise);
 
-void kalmanCoreUpdateWithPKE(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, arm_matrix_instance_f32 *Km, arm_matrix_instance_f32 *P_w_m, float error);
+/* PKE */
+void kalmanCoreUpdateWithPKE(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm, arm_matrix_instance_f32 *Km,
+                             arm_matrix_instance_f32 *P_w_m, float error);
 
 
-// SEUK: attitude selection + complementary access + compKp
+// ---------------- SEUK: Complementary attitude controls ----------------
 void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable);
 void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable);
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]);
-
 void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);
+// ----------------------------------------------------------------------
+
+
+// ---------------- NEW: Masked scalar update (position update decoupling) ----------------
+typedef enum {
+  KC_UPD_POS    = 1u << 0,  // X,Y,Z
+  KC_UPD_VEL    = 1u << 1,  // PX,PY,PZ
+  KC_UPD_ATTERR = 1u << 2   // D0,D1,D2
+} kalmanUpdateGroup_t;
+
+/**
+ * @brief Scalar update but with selective state update via Kalman gain masking.
+ *        If a state index is not allowed by allowedGroups, its K component becomes 0,
+ *        making both state update and covariance update consistent.
+ */
+void kalmanCoreScalarUpdateMasked(kalmanCoreData_t* this,
+                                  arm_matrix_instance_f32 *Hm,
+                                  float error,
+                                  float stdMeasNoise,
+                                  uint32_t allowedGroups);
+// ---------------------------------------------------------------------------------------
