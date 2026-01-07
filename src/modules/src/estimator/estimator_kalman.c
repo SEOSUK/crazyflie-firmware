@@ -408,6 +408,12 @@ void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
  * Variables and results from the Extended Kalman Filter
  */
 LOG_GROUP_START(kalman)
+
+  LOG_ADD(LOG_FLOAT, stateAXb, &coreData.S[KC_STATE_AXB])
+  LOG_ADD(LOG_FLOAT, stateAYb, &coreData.S[KC_STATE_AYB])
+  LOG_ADD(LOG_FLOAT, varAXb, &coreData.P[KC_STATE_AXB][KC_STATE_AXB])
+  LOG_ADD(LOG_FLOAT, varAYb, &coreData.P[KC_STATE_AYB][KC_STATE_AYB])
+
  /**
  * @brief State position in the global frame x
  *
@@ -531,6 +537,11 @@ LOG_GROUP_STOP(outlierf)
  *     estimator
  */
 PARAM_GROUP_START(kalman)
+
+/**
+ * @brief Process noise for external acceleration in body x/y (AXB/AYB)
+ */
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNExtAcc_xy, &coreParams.procNoiseExtAcc_xy)
 /**
  * @brief Reset the kalman estimator
  */

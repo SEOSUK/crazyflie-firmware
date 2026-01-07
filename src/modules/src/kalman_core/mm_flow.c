@@ -64,6 +64,7 @@ void kalmanCoreUpdateWithFlow(kalmanCoreData_t* this, const flowMeasurement_t *f
 
   float dx_g = this->S[KC_STATE_PX];
   float dy_g = this->S[KC_STATE_PY];
+  
   float z_g = 0.0;
   // Saturate elevation in prediction and correction to avoid singularities
   if ( this->S[KC_STATE_Z] < 0.1f ) {

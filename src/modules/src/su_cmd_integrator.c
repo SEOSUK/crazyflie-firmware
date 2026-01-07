@@ -203,13 +203,13 @@ void suCmdIntegratorUpdate(float dt,
       su_adm_int_Ferr_x += F_err_x * dt;
 
       // 4) v_adm 계산
-      const float v_adm_x =
-        su_adm_K * su_adm_int_Ferr_x +
-        su_adm_D * F_err_x -
-        su_adm_M * su_adm_Fdot_lpf_x;
+      // const float v_adm_x =
+      //   su_adm_K * su_adm_int_Ferr_x +
+      //   su_adm_D * F_err_x -
+      //   su_adm_M * su_adm_Fdot_lpf_x;
 
       // x 방향 속도 명령에 admittance 속도 더하기
-      vx_cmd += v_adm_x;
+      // vx_cmd += v_adm_x;
     }
 
     // ----- 기존 속도 적분 -----

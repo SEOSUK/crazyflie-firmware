@@ -163,6 +163,10 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   this->P[KC_STATE_Y][KC_STATE_Y]  = powf(params->stdDevInitialPosition_xy, 2);
   this->P[KC_STATE_Z][KC_STATE_Z]  = powf(params->stdDevInitialPosition_z, 2);
 
+  this->P[KC_STATE_AXB][KC_STATE_AXB] = powf(params->stdDevInitialExtAcc_xy, 2);
+  this->P[KC_STATE_AYB][KC_STATE_AYB] = powf(params->stdDevInitialExtAcc_xy, 2);
+
+
   this->P[KC_STATE_PX][KC_STATE_PX] = powf(params->stdDevInitialVelocity, 2);
   this->P[KC_STATE_PY][KC_STATE_PY] = powf(params->stdDevInitialVelocity, 2);
   this->P[KC_STATE_PZ][KC_STATE_PZ] = powf(params->stdDevInitialVelocity, 2);
@@ -357,6 +361,9 @@ static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, 
   A[KC_STATE_D1][KC_STATE_D1] = 1;
   A[KC_STATE_D2][KC_STATE_D2] = 1;
 
+A[KC_STATE_AXB][KC_STATE_AXB] = 1;
+A[KC_STATE_AYB][KC_STATE_AYB] = 1;
+
   // position from body-frame velocity
   A[KC_STATE_X][KC_STATE_PX] = this->R[0][0]*dt;
   A[KC_STATE_Y][KC_STATE_PX] = this->R[1][0]*dt;
@@ -408,6 +415,9 @@ static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, 
   A[KC_STATE_PX][KC_STATE_D2] = -GRAVITY_MAGNITUDE*this->R[2][1]*dt;
   A[KC_STATE_PY][KC_STATE_D2] =  GRAVITY_MAGNITUDE*this->R[2][0]*dt;
   A[KC_STATE_PZ][KC_STATE_D2] =  0;
+
+A[KC_STATE_PX][KC_STATE_AXB] = dt;
+A[KC_STATE_PY][KC_STATE_AYB] = dt;
 
   // attitude error from attitude error
   /**
@@ -477,8 +487,8 @@ static void predictDt(kalmanCoreData_t* this, const kalmanCoreParams_t *params, 
     tmpSPZ = this->S[KC_STATE_PZ];
 
     // body-velocity update: accelerometers - gyros cross velocity - gravity in body frame
-    this->S[KC_STATE_PX] += dt * (gyro->z * tmpSPY - gyro->y * tmpSPZ - GRAVITY_MAGNITUDE * this->R[2][0]);
-    this->S[KC_STATE_PY] += dt * (-gyro->z * tmpSPX + gyro->x * tmpSPZ - GRAVITY_MAGNITUDE * this->R[2][1]);
+  this->S[KC_STATE_PX] += dt * (gyro->z * tmpSPY - gyro->y * tmpSPZ - GRAVITY_MAGNITUDE * this->R[2][0] + this->S[KC_STATE_AXB]);
+  this->S[KC_STATE_PY] += dt * (-gyro->z * tmpSPX + gyro->x * tmpSPZ - GRAVITY_MAGNITUDE * this->R[2][1] + this->S[KC_STATE_AYB]);
     this->S[KC_STATE_PZ] += dt * (zacc + gyro->y * tmpSPX - gyro->x * tmpSPY - GRAVITY_MAGNITUDE * this->R[2][2]);
   }
   else // Acceleration can be in any direction, as measured by the accelerometer. This occurs, eg. in freefall or while being carried.
@@ -565,6 +575,9 @@ static void addProcessNoiseDt(kalmanCoreData_t *this, const kalmanCoreParams_t *
   this->P[KC_STATE_D1][KC_STATE_D1] += powf(params->measNoiseGyro_rollpitch * dt + params->procNoiseAtt, 2);
   this->P[KC_STATE_D2][KC_STATE_D2] += powf(params->measNoiseGyro_yaw * dt + params->procNoiseAtt, 2);
 
+this->P[KC_STATE_AXB][KC_STATE_AXB] += powf(params->procNoiseExtAcc_xy * dt, 2);
+this->P[KC_STATE_AYB][KC_STATE_AYB] += powf(params->procNoiseExtAcc_xy * dt, 2);  
+  
   for (int i=0; i<KC_STATE_DIM; i++) {
     for (int j=i; j<KC_STATE_DIM; j++) {
       float p = 0.5f*this->P[i][j] + 0.5f*this->P[j][i];
@@ -616,6 +629,8 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
   // Move attitude error into attitude if any of the angle errors are large enough
   if ((fabsf(v0) > 0.1e-3f || fabsf(v1) > 0.1e-3f || fabsf(v2) > 0.1e-3f) && (fabsf(v0) < 10 && fabsf(v1) < 10 && fabsf(v2) < 10))
   {
+    memset(A, 0, sizeof(A));
+    
     float angle = arm_sqrt(v0*v0 + v1*v1 + v2*v2) + EPS;
     float ca = arm_cos_f32(angle / 2.0f);
     float sa = arm_sin_f32(angle / 2.0f);
@@ -669,6 +684,8 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
     A[KC_STATE_D2][KC_STATE_D1] = -d0 + d1*d2/2;
     A[KC_STATE_D2][KC_STATE_D2] = 1 - d0*d0/2 - d1*d1/2;
 
+  A[KC_STATE_AXB][KC_STATE_AXB] = 1;
+  A[KC_STATE_AYB][KC_STATE_AYB] = 1;
     mat_trans(&Am, &tmpNN1m); // A'
     mat_mult(&Am, &this->Pm, &tmpNN2m); // AP
     mat_mult(&tmpNN2m, &tmpNN1m, &this->Pm); //APA'
