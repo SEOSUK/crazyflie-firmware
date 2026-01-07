@@ -133,6 +133,8 @@ typedef struct {
   float initialYaw;
 
   float attitudeReversion;
+
+  uint8_t flying3AxisAcc;  
 } kalmanCoreParams_t;
 
 /**

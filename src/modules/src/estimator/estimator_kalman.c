@@ -408,6 +408,7 @@ void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
  * Variables and results from the Extended Kalman Filter
  */
 LOG_GROUP_START(kalman)
+  LOG_ADD(LOG_UINT8, fly3ax, &coreParams.flying3AxisAcc)
  /**
  * @brief State position in the global frame x
  *
@@ -546,8 +547,14 @@ PARAM_GROUP_START(kalman)
 /**
  * @brief Process noise for x and y acceleration
  */
-  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAcc_xy, &coreParams.procNoiseAcc_xy)
+ PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAcc_xy, &coreParams.procNoiseAcc_xy)
 /**
+ * @brief When flying, use accelerometer x/y for prediction as well (default: 0)
+ * 0: legacy behavior (z-only accel when supervisorIsFlying)
+ * 1: use 3-axis accel even while flying
+ */
+ PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, flying3AxisAcc, &coreParams.flying3AxisAcc)
+ /**
  * @brief Process noise for z acceleration
  */
   PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAcc_z, &coreParams.procNoiseAcc_z)
