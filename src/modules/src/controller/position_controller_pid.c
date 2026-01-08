@@ -190,6 +190,27 @@ static float runPid(float input, struct pidAxis_s *axis, float setpoint, float d
 
 float state_body_x, state_body_y, state_body_vx, state_body_vy;
 
+// ---- XY velocity feedback decoupling (pos-diff based) ----
+static float vfp_body_vx = 0.0f;
+static float vfp_body_vy = 0.0f;
+static float prev_body_x = 0.0f;
+static float prev_body_y = 0.0f;
+static bool  vfp_init = false;
+
+// hardcoded cutoff (Hz)
+static float vfp_cutoff_hz = 3.0f;
+
+// 1st order LPF (all-float, no double promotion)
+static inline float lpf1f(float y, float x, float dt, float fc_hz)
+{
+  const float fc = (fc_hz > 0.1f) ? fc_hz : 0.1f;
+  const float two_pi = 6.283185307179586f;
+  const float tau = 1.0f / (two_pi * fc);
+  const float a = dt / (tau + dt);
+  return y + a * (x - y);
+}
+
+
 void positionController(float* thrust, attitude_t *attitude, const setpoint_t *setpoint,
                                                              const state_t *state)
 {
@@ -199,14 +220,37 @@ void positionController(float* thrust, attitude_t *attitude, const setpoint_t *s
   // this value is below 0.5
   this.pidZ.pid.outputLimit = fmaxf(zVelMax, 0.5f)  * velMaxOverhead;
 
-  float cosyaw = cosf(state->attitude.yaw * (float)M_PI / 180.0f);
-  float sinyaw = sinf(state->attitude.yaw * (float)M_PI / 180.0f);
+  const float yawRad = state->attitude.yaw * (float)M_PI / 180.0f;
+  const float cosyaw = cosf(yawRad);
+  const float sinyaw = sinf(yawRad);
+
 
   float setp_body_x = setpoint->position.x * cosyaw + setpoint->position.y * sinyaw;
   float setp_body_y = -setpoint->position.x * sinyaw + setpoint->position.y * cosyaw;
 
   state_body_x = state->position.x * cosyaw + state->position.y * sinyaw;
   state_body_y = -state->position.x * sinyaw + state->position.y * cosyaw;
+
+  // ---- vfp (pos-diff) update in yaw-aligned body frame ----
+  const float dt = DT; // ensure float (avoid double promotion chains)
+
+  if (!vfp_init) {
+    prev_body_x = state_body_x;
+    prev_body_y = state_body_y;
+    vfp_body_vx = 0.0f;
+    vfp_body_vy = 0.0f;
+    vfp_init = true;
+  } else {
+    const float raw_vx = (state_body_x - prev_body_x) / dt;
+    const float raw_vy = (state_body_y - prev_body_y) / dt;
+
+    vfp_body_vx = lpf1f(vfp_body_vx, raw_vx, dt, vfp_cutoff_hz);
+    vfp_body_vy = lpf1f(vfp_body_vy, raw_vy, dt, vfp_cutoff_hz);
+
+    prev_body_x = state_body_x;
+    prev_body_y = state_body_y;
+  }
+
 
   float globalvx = setpoint->velocity.x;
   float globalvy = setpoint->velocity.y;
@@ -242,11 +286,10 @@ void velocityController(float* thrust, attitude_t *attitude, const Axis3f* setpo
   this.pidVZ.pid.outputLimit = (UINT16_MAX / 2 / thrustScale);
   //this.pidVZ.pid.outputLimit = (this.thrustBase - this.thrustMin) / thrustScale;
 
-  float cosyaw = cosf(state->attitude.yaw * (float)M_PI / 180.0f);
-  float sinyaw = sinf(state->attitude.yaw * (float)M_PI / 180.0f);
-  state_body_vx = state->velocity.x * cosyaw + state->velocity.y * sinyaw;
-  state_body_vy = -state->velocity.x * sinyaw + state->velocity.y * cosyaw;
-
+  // state_body_vx = state->velocity.x * cosyaw + state->velocity.y * sinyaw;
+  // state_body_vy = -state->velocity.x * sinyaw + state->velocity.y * cosyaw;
+  state_body_vx = vfp_body_vx;
+  state_body_vy = vfp_body_vy;
   // Roll and Pitch
   attitude->pitch = -runPid(state_body_vx, &this.pidVX, setpoint_velocity->x, DT);
   attitude->roll = -runPid(state_body_vy, &this.pidVY, setpoint_velocity->y, DT);
@@ -274,6 +317,13 @@ void positionControllerResetAllPID(float xActual, float yActual, float zActual)
   pidReset(&this.pidVX.pid, 0);
   pidReset(&this.pidVY.pid, 0);
   pidReset(&this.pidVZ.pid, 0);
+
+  vfp_init = false;
+  vfp_body_vx = 0.0f;
+  vfp_body_vy = 0.0f;
+  prev_body_x = 0.0f;
+  prev_body_y = 0.0f;
+
 }
 
 void positionControllerResetAllfilters() {
