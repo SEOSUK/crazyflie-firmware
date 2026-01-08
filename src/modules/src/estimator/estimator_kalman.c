@@ -116,7 +116,7 @@ static StaticSemaphore_t dataMutexBuffer;
 static float a_norm_f = 0.0f;   // LPF된 acc norm
 static float alpha_decouple = 0.0f; // [0,1] attitude decoupling gain
 
-static uint8_t fuseCompAttToKalmanParam = 1; // (A) 0 off, 1 on
+static uint8_t fuseCompAttToKalmanParam = 0; // (A) 0 off, 1 on
 static float compFuseStdRPParam = 0.05f;     // rad
 static float compSlaveStdRPParam = 0.10f;    // rad
 
