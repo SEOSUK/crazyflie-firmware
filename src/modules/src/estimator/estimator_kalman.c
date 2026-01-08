@@ -112,6 +112,9 @@ static SemaphoreHandle_t runTaskSemaphore;
 static SemaphoreHandle_t dataMutex;
 static StaticSemaphore_t dataMutexBuffer;
 
+// --- Contact-aware position update diagnostics ---
+static float a_norm_f = 0.0f;   // LPF된 acc norm
+static float alpha_decouple = 0.0f; // [0,1] attitude decoupling gain
 
 /**
  * Tuning parameters
@@ -146,6 +149,8 @@ NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 // Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
 static uint8_t useCompAttOutParam = 0;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
 static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
+
+static uint8_t useContactAwarePosUpdate = 0;
 // ---------------
 
 
@@ -334,23 +339,88 @@ static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlyi
         }
         break;
       case MeasurementTypePosition:
-        {
-          // --- [Custom Patch] Disable attitude coupling from external position ---
-          kalmanCoreData_t coreDataCopy = coreData;
+      {
+        // =========================================================
+        // Legacy mode: plain Kalman position update
+        // =========================================================
+        // if (useContactAwarePosUpdate == 0) {
           kalmanCoreUpdateWithPosition(&coreData, &m.data.position);
-          // attitude (quaternion) restore
-          for (int i = 0; i < 4; i++) {
-              coreData.q[i] = coreDataCopy.q[i];
-          }
-          // optional: attitude error (delta) restore
-          coreData.S[KC_STATE_D0] = coreDataCopy.S[KC_STATE_D0];
-          coreData.S[KC_STATE_D1] = coreDataCopy.S[KC_STATE_D1];
-          coreData.S[KC_STATE_D2] = coreDataCopy.S[KC_STATE_D2];
-        }
-        break;
-      case MeasurementTypePose:
+          break;
+        // }
+
+        // // =========================================================
+        // // Contact-aware mode (SAFE VERSION)
+        // //   - DO NOT touch quaternion q (avoid inconsistency)
+        // //   - Restore/blend ONLY D0/D1 (roll/pitch error states)
+        // //   - Attenuate ONLY P cross-terms of D0/D1
+        // //   - Keep D2 (yaw) fully legacy (not restored, not decoupled)
+        // // =========================================================
+
+        // // ---- 0) compute acc norm (Gs) from last externalized state ----
+        // // taskEstimatorState.acc is world-frame, gravity removed per kalmanCoreExternalizeState()
+        // const float ax = taskEstimatorState.acc.x;
+        // const float ay = taskEstimatorState.acc.y;
+        // const float az = taskEstimatorState.acc.z;
+
+        // const float a_norm = sqrtf(ax*ax + ay*ay + az*az); // in Gs
+
+        // // ---- 0b) LPF (tune beta) ----
+        // const float beta = 0.05f;               // LPF coef
+        // a_norm_f += beta * (a_norm - a_norm_f);
+
+        // // ---- 1) map acc norm -> alpha (0..1) ----
+        // const float a0 = 0.20f;   // start decoupling
+        // const float a1 = 0.40f;   // full decoupling
+
+        // float alpha;
+        // if (a_norm_f <= a0) {
+        //   alpha = 0.0f;
+        // } else if (a_norm_f >= a1) {
+        //   alpha = 1.0f;
+        // } else {
+        //   alpha = (a_norm_f - a0) / (a1 - a0);
+        // }
+
+        // if (alpha < 0.0f) alpha = 0.0f;
+        // if (alpha > 1.0f) alpha = 1.0f;
+        // alpha_decouple = alpha; // for logging
+
+        // // ---- 2) backup ONLY roll/pitch attitude-error states ----
+        // const float d0_bak = coreData.S[KC_STATE_D0];
+        // const float d1_bak = coreData.S[KC_STATE_D1];
+        // // NOTE: D2(yaw)는 백업/복원 안 함 (always legacy)
+
+        // // ---- 3) normal position update ----
+        // kalmanCoreUpdateWithPosition(&coreData, &m.data.position);
+
+        // // ---- 4) blend back ONLY D0/D1 so position residual cannot force roll/pitch too much ----
+        // coreData.S[KC_STATE_D0] = (1.0f - alpha) * coreData.S[KC_STATE_D0] + alpha * d0_bak;
+        // coreData.S[KC_STATE_D1] = (1.0f - alpha) * coreData.S[KC_STATE_D1] + alpha * d1_bak;
+
+        // // ---- 5) Gradually cut covariance coupling for D0/D1 cross-terms only ----
+        // const float keep = 1.0f - alpha;
+
+        // for (int i = 0; i < KC_STATE_DIM; i++) {
+        //   if (i != KC_STATE_D0) {
+        //     coreData.P[KC_STATE_D0][i] *= keep;
+        //     coreData.P[i][KC_STATE_D0]  = coreData.P[KC_STATE_D0][i];
+        //   }
+        //   if (i != KC_STATE_D1) {
+        //     coreData.P[KC_STATE_D1][i] *= keep;
+        //     coreData.P[i][KC_STATE_D1]  = coreData.P[KC_STATE_D1][i];
+        //   }
+        //   // NOTE: D2(yaw)는 손대지 않음
+        // }
+
+        // // keep diagonals floored (optional safety)
+        // coreData.P[KC_STATE_D0][KC_STATE_D0] = fmaxf(coreData.P[KC_STATE_D0][KC_STATE_D0], MIN_COVARIANCE);
+        // coreData.P[KC_STATE_D1][KC_STATE_D1] = fmaxf(coreData.P[KC_STATE_D1][KC_STATE_D1], MIN_COVARIANCE);
+
+        // break;
+      }
+        case MeasurementTypePose:
         kalmanCoreUpdateWithPose(&coreData, &m.data.pose);
-        break;
+      break;
       case MeasurementTypeDistance:
         if(robustTwr){
             // robust KF update with UWB TWR measurements
@@ -366,8 +436,20 @@ static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlyi
       case MeasurementTypeAbsoluteHeight:
         kalmanCoreUpdateWithAbsoluteHeight(&coreData, &m.data.height);
         break;
-      case MeasurementTypeFlow:
-        kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
+      case MeasurementTypeFlow:  
+      {
+          // // --- [Custom Patch] Disable attitude coupling from external position ---
+          // kalmanCoreData_t coreDataCopy = coreData;
+          kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
+          // // attitude (quaternion) restore
+          // for (int i = 0; i < 4; i++) {
+          //     coreData.q[i] = coreDataCopy.q[i];
+          // }
+          // // optional: attitude error (delta) restore
+          // coreData.S[KC_STATE_D0] = coreDataCopy.S[KC_STATE_D0];
+          // coreData.S[KC_STATE_D1] = coreDataCopy.S[KC_STATE_D1];
+          // coreData.S[KC_STATE_D2] = coreDataCopy.S[KC_STATE_D2];
+        }
         break;
       case MeasurementTypeYawError:
         kalmanCoreUpdateWithYawError(&coreData, &m.data.yawError);
@@ -441,6 +523,14 @@ void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
  * Variables and results from the Extended Kalman Filter
  */
 LOG_GROUP_START(kalman)
+  /**
+   * @brief LPF filtered acceleration norm (contact indicator)
+   */
+  LOG_ADD(LOG_FLOAT, aNormF, &a_norm_f)
+  /**
+   * @brief Attitude decoupling alpha (0 = none, 1 = full)
+   */
+  LOG_ADD(LOG_FLOAT, alphaDecouple, &alpha_decouple)
  /**
  * @brief State position in the global frame x
  *
@@ -592,6 +682,14 @@ LOG_GROUP_STOP(outlierf)
  *     estimator
  */
 PARAM_GROUP_START(kalman)
+  /**
+   * @brief Use contact-aware position update
+   * 0: legacy Kalman
+   * 1: acc-norm based attitude decoupling
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT,
+                 useContactAwarePosUpdate,
+                 &useContactAwarePosUpdate)
 /**
  * @brief Reset the kalman estimator
  */
