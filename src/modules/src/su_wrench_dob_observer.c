@@ -279,18 +279,18 @@ void suWrenchObserverDOBGetWorldForce(float outF[3])
 // ==============================
 // 로그 그룹
 // ==============================
-LOG_GROUP_START(suWrenchDOB)
+// LOG_GROUP_START(suWrenchDOB)
 
-LOG_ADD(LOG_FLOAT, suWFx_scaled, &su_world_input_Force_scaled[0])
-LOG_ADD(LOG_FLOAT, suWFy_scaled, &su_world_input_Force_scaled[1])
-LOG_ADD(LOG_FLOAT, suWFz_scaled, &su_world_input_Force_scaled[2])
+// LOG_ADD(LOG_FLOAT, suWFx_scaled, &su_world_input_Force_scaled[0])
+// LOG_ADD(LOG_FLOAT, suWFy_scaled, &su_world_input_Force_scaled[1])
+// LOG_ADD(LOG_FLOAT, suWFz_scaled, &su_world_input_Force_scaled[2])
 
-LOG_ADD(LOG_FLOAT, suV,     &su_vbat_log)
-LOG_ADD(LOG_FLOAT, suDt,    &su_dt_mon)
-LOG_ADD(LOG_FLOAT, suDtraw, &su_dt_raw)
+// LOG_ADD(LOG_FLOAT, suV,     &su_vbat_log)
+// LOG_ADD(LOG_FLOAT, suDt,    &su_dt_mon)
+// LOG_ADD(LOG_FLOAT, suDtraw, &su_dt_raw)
 
-LOG_ADD(LOG_FLOAT, suFextX, &su_dob_wext_hat_raw6[0])
-LOG_ADD(LOG_FLOAT, suFextY, &su_dob_wext_hat_raw6[1])
-LOG_ADD(LOG_FLOAT, suFextZ, &su_dob_wext_hat_raw6[2])
+// LOG_ADD(LOG_FLOAT, suFextX, &su_dob_wext_hat_raw6[0])
+// LOG_ADD(LOG_FLOAT, suFextY, &su_dob_wext_hat_raw6[1])
+// LOG_ADD(LOG_FLOAT, suFextZ, &su_dob_wext_hat_raw6[2])
 
-LOG_GROUP_STOP(suWrenchDOB)
+// LOG_GROUP_STOP(suWrenchDOB)
