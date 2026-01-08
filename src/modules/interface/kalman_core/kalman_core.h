@@ -106,12 +106,27 @@ typedef struct {
   uint32_t lastCompUpdateMs;
 
   // Attitude 모드 플래그
-  bool useComplementaryAttitudeOutput;   // controller에 내보낼 때 complementary 쓸지 여부
+// kalman_core.h (kalmanCoreData_t 내부)
+  uint8_t attOutMode;   // 0: kalman(q), 1: comp(qComp), 2: mixed(RP from qComp + yaw from q)
+  
   bool slaveKalmanToComplementary;       // 내부 Kalman q/R도 complementary에 동기화할지 여부
 
+  bool fuseComplementaryToKalman;        // (A) fusion (NEW)
+  
+  
   // Complementary roll/pitch correction gain (KP)
   float compKp;                          // <-- 이번에 param으로 뺄 값
+
+  float compFuseStdRP;                   // (A) roll/pitch meas std [rad] (NEW)
+  float compSlaveStdRP;                  // (B) post-injection std for D0/D1 [rad] (NEW)
   // ---- 새로 추가 끝 ----
+
+  // --- Mahony PI (Complementary) bias estimator ---
+  float compBias[3];       // [rad/s], only x/y used, z kept 0
+  float compKi;            // I gain
+  float compBiasLimit;     // saturation limit for bias (rad/s)
+  float compGyroGate;      // gyro norm gate for bias integration (rad/s)
+
 } kalmanCoreData_t;
 
 
@@ -175,8 +190,13 @@ void kalmanCoreUpdateWithPKE(kalmanCoreData_t* this, arm_matrix_instance_f32 *Hm
 
 
 // SEUK: attitude selection + complementary access + compKp
-void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable);
 void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable);
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]);
+void kalmanCoreSetFuseComplementaryToKalman(kalmanCoreData_t* this, bool enable); // NEW
 
 void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);
+
+void kalmanCoreSetCompFuseStdRP(kalmanCoreData_t* this, float std_rad);   // NEW
+void kalmanCoreSetCompSlaveStdRP(kalmanCoreData_t* this, float std_rad);  // NEW
+
+void kalmanCoreSetAttitudeOutputMode(kalmanCoreData_t* this, uint8_t mode);

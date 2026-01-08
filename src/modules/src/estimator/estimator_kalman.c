@@ -116,12 +116,16 @@ static StaticSemaphore_t dataMutexBuffer;
 static float a_norm_f = 0.0f;   // LPF된 acc norm
 static float alpha_decouple = 0.0f; // [0,1] attitude decoupling gain
 
+static uint8_t fuseCompAttToKalmanParam = 1; // (A) 0 off, 1 on
+static float compFuseStdRPParam = 0.05f;     // rad
+static float compSlaveStdRPParam = 0.10f;    // rad
+
 // --- Contact-aware gating ---
 static uint32_t flyingSinceMs = 0;
 static bool flyingPrev = false;
 
 // 튜닝: 이륙 후 몇 ms 동안은 decouple 비활성화
-static uint32_t contactAwareDelayMs = 5000;  // 예: 1.5s
+// static uint32_t contactAwareDelayMs = 5000;  // 예: 1.5s
 
 
 /**
@@ -155,7 +159,7 @@ NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 // SEUK
 // --- 여기 추가 ---
 // Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
-static uint8_t useCompAttOutParam = 0;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
+static uint8_t useCompAttOutParam = 2;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
 static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
 
 // static uint8_t useContactAwarePosUpdate = 1;
@@ -248,10 +252,13 @@ static void kalmanTask(void* parameters) {
 
 
     // --- param 값을 coreData 플래그에 반영 ---
-    kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
+    kalmanCoreSetAttitudeOutputMode(&coreData, useCompAttOutParam);
     kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
     kalmanCoreSetCompKp(&coreData, compKpParam);
     // ----------------------------------------
+    kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
+    kalmanCoreSetCompFuseStdRP(&coreData, compFuseStdRPParam);
+    kalmanCoreSetCompSlaveStdRP(&coreData, compSlaveStdRPParam);
 
 
     if (resetEstimation) {
@@ -343,7 +350,7 @@ if (quadIsFlying && !flyingPrev) {
 flyingPrev = quadIsFlying;
 
 // gate: allow contact-aware only after delay
-const bool allowContactAware = quadIsFlying && ((nowMs - flyingSinceMs) >= contactAwareDelayMs);
+// const bool allowContactAware = quadIsFlying && ((nowMs - flyingSinceMs) >= contactAwareDelayMs);
 
 
 
@@ -464,86 +471,86 @@ const bool allowContactAware = quadIsFlying && ((nowMs - flyingSinceMs) >= conta
         // Legacy mode: plain Kalman flow update
         // =========================================================
         // if (useContactAwarePosUpdate == 0) {
-        //   kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
-        //   break;
+          kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
+          break;
         // }
 
-        // =========================================================
-        // Contact-aware mode (SAFE VERSION) for FLOW
-        //   - DO NOT touch quaternion q
-        //   - Restore/blend ONLY D0/D1 (roll/pitch error states)
-        //   - Attenuate ONLY P cross-terms of D0/D1
-        //   - Keep D2 (yaw) fully legacy
-        // =========================================================
+      //   // =========================================================
+      //   // Contact-aware mode (SAFE VERSION) for FLOW
+      //   //   - DO NOT touch quaternion q
+      //   //   - Restore/blend ONLY D0/D1 (roll/pitch error states)
+      //   //   - Attenuate ONLY P cross-terms of D0/D1
+      //   //   - Keep D2 (yaw) fully legacy
+      //   // =========================================================
 
-      if (!allowContactAware) {
-        // 이륙 직후(or 비행 아님): legacy 업데이트만
-        kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
-        alpha_decouple = 0.0f; // 로그상에서도 0으로
-        break;
-      }
+      // if (!allowContactAware) {
+      //   // 이륙 직후(or 비행 아님): legacy 업데이트만
+      //   kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
+      //   alpha_decouple = 0.0f; // 로그상에서도 0으로
+      //   break;
+      // }
 
-        // ---- 0) compute acc norm (Gs) from last externalized state ----
-        // taskEstimatorState.acc is world-frame, gravity removed per kalmanCoreExternalizeState()
-        const float ax = taskEstimatorState.acc.x;
-        const float ay = taskEstimatorState.acc.y;
-        const float az = taskEstimatorState.acc.z;
+      //   // ---- 0) compute acc norm (Gs) from last externalized state ----
+      //   // taskEstimatorState.acc is world-frame, gravity removed per kalmanCoreExternalizeState()
+      //   const float ax = taskEstimatorState.acc.x;
+      //   const float ay = taskEstimatorState.acc.y;
+      //   const float az = taskEstimatorState.acc.z;
 
-        const float a_norm = sqrtf(ax*ax + ay*ay + az*az); // in Gs
+      //   const float a_norm = sqrtf(ax*ax + ay*ay + az*az); // in Gs
 
-        // ---- 0b) LPF (tune beta) ----
-        const float beta = 0.05f;
-        a_norm_f += beta * (a_norm - a_norm_f);
+      //   // ---- 0b) LPF (tune beta) ----
+      //   const float beta = 0.05f;
+      //   a_norm_f += beta * (a_norm - a_norm_f);
 
-        // ---- 1) map acc norm -> alpha (0..1) ----
-        const float a0 = 0.05f;   // start decoupling
-        const float a1 = 0.15f;   // full decoupling
+      //   // ---- 1) map acc norm -> alpha (0..1) ----
+      //   const float a0 = 0.05f;   // start decoupling
+      //   const float a1 = 0.15f;   // full decoupling
 
-        float alpha;
-        if (a_norm_f <= a0) {
-          alpha = 0.0f;
-        } else if (a_norm_f >= a1) {
-          alpha = 1.0f;
-        } else {
-          alpha = (a_norm_f - a0) / (a1 - a0);
-        }
+      //   float alpha;
+      //   if (a_norm_f <= a0) {
+      //     alpha = 0.0f;
+      //   } else if (a_norm_f >= a1) {
+      //     alpha = 1.0f;
+      //   } else {
+      //     alpha = (a_norm_f - a0) / (a1 - a0);
+      //   }
 
-        if (alpha < 0.0f) alpha = 0.0f;
-        if (alpha > 1.0f) alpha = 1.0f;
-        alpha_decouple = alpha; // for logging (same variable you already use)
+      //   if (alpha < 0.0f) alpha = 0.0f;
+      //   if (alpha > 1.0f) alpha = 1.0f;
+      //   alpha_decouple = alpha; // for logging (same variable you already use)
 
-        // ---- 2) backup ONLY roll/pitch attitude-error states ----
-        const float d0_bak = coreData.S[KC_STATE_D0];
-        const float d1_bak = coreData.S[KC_STATE_D1];
-        // NOTE: D2(yaw)는 백업/복원 안 함 (always legacy)
+      //   // ---- 2) backup ONLY roll/pitch attitude-error states ----
+      //   const float d0_bak = coreData.S[KC_STATE_D0];
+      //   const float d1_bak = coreData.S[KC_STATE_D1];
+      //   // NOTE: D2(yaw)는 백업/복원 안 함 (always legacy)
 
-        // ---- 3) normal flow update ----
-        kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
+      //   // ---- 3) normal flow update ----
+      //   kalmanCoreUpdateWithFlow(&coreData, &m.data.flow, &gyroLatest);
 
-        // ---- 4) blend back ONLY D0/D1 so flow residual cannot force roll/pitch too much ----
-        coreData.S[KC_STATE_D0] = (1.0f - alpha) * coreData.S[KC_STATE_D0] + alpha * d0_bak;
-        coreData.S[KC_STATE_D1] = (1.0f - alpha) * coreData.S[KC_STATE_D1] + alpha * d1_bak;
+      //   // ---- 4) blend back ONLY D0/D1 so flow residual cannot force roll/pitch too much ----
+      //   coreData.S[KC_STATE_D0] = (1.0f - alpha) * coreData.S[KC_STATE_D0] + alpha * d0_bak;
+      //   coreData.S[KC_STATE_D1] = (1.0f - alpha) * coreData.S[KC_STATE_D1] + alpha * d1_bak;
 
-        // ---- 5) Gradually cut covariance coupling for D0/D1 cross-terms only ----
-        const float keep = 1.0f - alpha;
+      //   // ---- 5) Gradually cut covariance coupling for D0/D1 cross-terms only ----
+      //   const float keep = 1.0f - alpha;
 
-        for (int i = 0; i < KC_STATE_DIM; i++) {
-          if (i != KC_STATE_D0) {
-            coreData.P[KC_STATE_D0][i] *= keep;
-            coreData.P[i][KC_STATE_D0]  = coreData.P[KC_STATE_D0][i];
-          }
-          if (i != KC_STATE_D1) {
-            coreData.P[KC_STATE_D1][i] *= keep;
-            coreData.P[i][KC_STATE_D1]  = coreData.P[KC_STATE_D1][i];
-          }
-          // NOTE: D2(yaw)는 손대지 않음
-        }
+      //   for (int i = 0; i < KC_STATE_DIM; i++) {
+      //     if (i != KC_STATE_D0) {
+      //       coreData.P[KC_STATE_D0][i] *= keep;
+      //       coreData.P[i][KC_STATE_D0]  = coreData.P[KC_STATE_D0][i];
+      //     }
+      //     if (i != KC_STATE_D1) {
+      //       coreData.P[KC_STATE_D1][i] *= keep;
+      //       coreData.P[i][KC_STATE_D1]  = coreData.P[KC_STATE_D1][i];
+      //     }
+      //     // NOTE: D2(yaw)는 손대지 않음
+      //   }
 
-        // keep diagonals floored (optional safety)
-        coreData.P[KC_STATE_D0][KC_STATE_D0] = fmaxf(coreData.P[KC_STATE_D0][KC_STATE_D0], MIN_COVARIANCE);
-        coreData.P[KC_STATE_D1][KC_STATE_D1] = fmaxf(coreData.P[KC_STATE_D1][KC_STATE_D1], MIN_COVARIANCE);
+      //   // keep diagonals floored (optional safety)
+      //   coreData.P[KC_STATE_D0][KC_STATE_D0] = fmaxf(coreData.P[KC_STATE_D0][KC_STATE_D0], MIN_COVARIANCE);
+      //   coreData.P[KC_STATE_D1][KC_STATE_D1] = fmaxf(coreData.P[KC_STATE_D1][KC_STATE_D1], MIN_COVARIANCE);
 
-        break;
+      //   break;
       }
       case MeasurementTypeYawError:
         kalmanCoreUpdateWithYawError(&coreData, &m.data.yawError);
@@ -594,8 +601,13 @@ void estimatorKalmanInit(void)
 
   // SEUK
   // init 시에도 param과 core 플래그를 동기화
-  kalmanCoreSetUseComplementaryAttitudeOutput(&coreData, (useCompAttOutParam != 0));
+  kalmanCoreSetAttitudeOutputMode(&coreData, useCompAttOutParam); // 0/1/2
   kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));  
+
+  kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
+  kalmanCoreSetCompFuseStdRP(&coreData, compFuseStdRPParam);
+  kalmanCoreSetCompSlaveStdRP(&coreData, compSlaveStdRPParam);
+  
 }
 
 bool estimatorKalmanTest(void)
@@ -780,13 +792,25 @@ LOG_GROUP_STOP(outlierf)
  *     estimator
  */
 PARAM_GROUP_START(kalman)
-  /**
-   * @brief Use contact-aware position update
-   * 0: legacy Kalman
-   * 1: acc-norm based attitude decoupling
+
+  // PARAM_ADD_CORE(PARAM_UINT8, fuseCompAttToKalman, &fuseCompAttToKalmanParam)
+  // PARAM_ADD_CORE(PARAM_FLOAT, compFuseStdRP, &compFuseStdRPParam)
+  // PARAM_ADD_CORE(PARAM_FLOAT, compSlaveStdRP, &compSlaveStdRPParam)
+  /*
+   * @brief use complementary attitude output mode
+   * 0: kalman
+   * 1: complementary (full)
+   * 2: complementary roll/pitch + kalman yaw
    */
-  // PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, useContactAwarePosUpdate, &useContactAwarePosUpdate)
-/**
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, useCompAttOut, &useCompAttOutParam)
+  /**
+   * @brief Slave internal Kalman attitude (q,R) to complementary (0: off, 1: on)
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
+  
+  // PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
+
+  /**
  * @brief Reset the kalman estimator
  */
   PARAM_ADD_CORE(PARAM_UINT8, resetEstimation, &resetEstimation)
@@ -846,15 +870,4 @@ PARAM_GROUP_START(kalman)
  * @brief Initial yaw after reset [rad]
  */
   PARAM_ADD_CORE(PARAM_FLOAT, initialYaw, &coreParams.initialYaw)
-
-  /**
-   * @brief Use complementary attitude for external output (0: Kalman, 1: Complementary)
-   */
-  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, useCompAttOut, &useCompAttOutParam)
-  /**
-   * @brief Slave internal Kalman attitude (q,R) to complementary (0: off, 1: on)
-   */
-  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
-  
-  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
 PARAM_GROUP_STOP(kalman)

@@ -110,12 +110,20 @@ static void assertStateNotNaN(const kalmanCoreData_t* this)
 #endif
 
 
+
 // SEUK
+static void quatEnsurePositiveWLocal(float q[4])
+{
+  if (q[0] < 0.0f) {
+    q[0] = -q[0]; q[1] = -q[1]; q[2] = -q[2]; q[3] = -q[3];
+  }
+}
+
 // -------------------- Complementary attitude filter (quaternion) --------------------
 
 #define COMP_EPS          (1e-6f)
-#define COMP_ACC_MIN_NORM (0.0f)    // 너무 작은 acc 는 free-fall로 보고 무시
-#define COMP_ACC_MAX_NORM (500.0f)    // 너무 큰 acc 는 contact 등으로 보고 무시 --> 안하겠다느 소리에 가깝긴 함
+#define COMP_ACC_MIN_NORM (9.0f)
+#define COMP_ACC_MAX_NORM (11.f)
 
 // q 정규화
 static void quatNormalize(float q[4])
@@ -123,6 +131,128 @@ static void quatNormalize(float q[4])
   float n = arm_sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) + COMP_EPS;
   q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n;
 }
+
+// -------------------- (A) Complementary attitude -> Kalman fusion --------------------
+
+static void quatConj(const float q[4], float qc[4])
+{
+  qc[0] = q[0];
+  qc[1] = -q[1];
+  qc[2] = -q[2];
+  qc[3] = -q[3];
+}
+
+static void quatMul(const float a[4], const float b[4], float out[4])
+{
+  out[0] = a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3];
+  out[1] = a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2];
+  out[2] = a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1];
+  out[3] = a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0];
+}
+
+// yaw(q) [rad] (same convention as your Euler extraction)
+static float quatYawRad(const float q[4])
+{
+  const float qw = q[0], qx = q[1], qy = q[2], qz = q[3];
+  return atan2f(2.0f*(qx*qy + qw*qz), (qw*qw + qx*qx - qy*qy - qz*qz));
+}
+
+static void quatFromYawRad(float yaw, float qYaw[4])
+{
+  const float half = 0.5f * yaw;
+  qYaw[0] = arm_cos_f32(half);
+  qYaw[1] = 0.0f;
+  qYaw[2] = 0.0f;
+  qYaw[3] = arm_sin_f32(half);
+  quatNormalize(qYaw);
+}
+
+// qOut = qYaw(kalman) ⊗ qTilt(comp),  where qTilt(comp) = conj(qYaw(comp)) ⊗ qComp
+static void buildMixedQuatYawKalmanTiltComp(const float qKal[4], const float qComp[4], float qOut[4])
+{
+  // 1) yaw-only quats
+  float qYawKal[4], qYawComp[4];
+  quatFromYawRad(quatYawRad(qKal),  qYawKal);
+  quatFromYawRad(quatYawRad(qComp), qYawComp);
+
+  // 2) qTiltComp = conj(qYawComp) ⊗ qComp
+  float qYawCompConj[4];
+  quatConj(qYawComp, qYawCompConj);
+
+  float qTiltComp[4];
+  quatMul(qYawCompConj, qComp, qTiltComp);
+  quatNormalize(qTiltComp);
+  quatEnsurePositiveWLocal(qTiltComp);
+
+  // 3) qOut = qYawKal ⊗ qTiltComp
+  quatMul(qYawKal, qTiltComp, qOut);
+  quatNormalize(qOut);
+
+  quatEnsurePositiveWLocal(qOut);
+}
+
+static void fuseCompRollPitchToKalman(kalmanCoreData_t* this, float std_rad)
+{
+  // Measurement model: z = D0, z = D1
+  // z comes from qComp ⊗ q^{-1} small-angle error
+  if (std_rad < 1e-6f) {
+    std_rad = 1e-3f;
+  }
+
+  // q_err = qComp ⊗ conj(q)
+  float q_conj[4];
+  float q_err[4];
+  quatConj(this->q, q_conj);
+  quatMul(this->qComp, q_conj, q_err);
+  quatNormalize(q_err);
+  quatEnsurePositiveWLocal(q_err);
+
+  // small-angle approx: v ≈ 2 * vec(q_err)
+  const float v0 = 2.0f * q_err[1]; // roll-ish error
+  const float v1 = 2.0f * q_err[2]; // pitch-ish error
+  // const float v2 = 2.0f * q_err[3]; // yaw error (ignored)
+
+  // Fuse D0
+  {
+    float h[KC_STATE_DIM] = {0};
+    arm_matrix_instance_f32 H = {1, KC_STATE_DIM, h};
+    h[KC_STATE_D0] = 1.0f;
+
+    // innovation: z - D0
+    const float innov = v0 - this->S[KC_STATE_D0];
+    kalmanCoreScalarUpdate(this, &H, innov, std_rad);
+  }
+
+  // Fuse D1
+  {
+    float h[KC_STATE_DIM] = {0};
+    arm_matrix_instance_f32 H = {1, KC_STATE_DIM, h};
+    h[KC_STATE_D1] = 1.0f;
+
+    const float innov = v1 - this->S[KC_STATE_D1];
+    kalmanCoreScalarUpdate(this, &H, innov, std_rad);
+  }
+}
+
+void kalmanCoreSetFuseComplementaryToKalman(kalmanCoreData_t* this, bool enable)
+{
+  this->fuseComplementaryToKalman = enable;
+}
+
+void kalmanCoreSetCompFuseStdRP(kalmanCoreData_t* this, float std_rad)
+{
+  if (std_rad < 0.0f) std_rad = 0.0f;
+  if (std_rad > 1.0f) std_rad = 1.0f; // rad 단위, 필요시 더 늘려도 됨
+  this->compFuseStdRP = std_rad;
+}
+
+void kalmanCoreSetCompSlaveStdRP(kalmanCoreData_t* this, float std_rad)
+{
+  if (std_rad < 0.0f) std_rad = 0.0f;
+  if (std_rad > 1.0f) std_rad = 1.0f;
+  this->compSlaveStdRP = std_rad;
+}
+
 
 // q ← q ⊗ δq(gyro*dt)
 static void quatIntegrateGyro(float q[4], const Axis3f* gyro, float dt)
@@ -159,84 +289,100 @@ static void quatToBodyZ(const float q[4], float g_est[3])
   g_est[2] = R22;
 }
 
-// complementary attitude 업데이트 (qComp 사용)
+static inline float clampf(float x, float lo, float hi)
+{
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+
+// complementary attitude 업데이트 (Mahony PI 형태: bias 추정 포함)
 static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const Axis3f* gyro, float dt)
 {
   if (dt <= 0.0f) {
     return;
   }
 
-  // 1) gyro 기반 예측
-  quatIntegrateGyro(this->qComp, gyro, dt);
-
-  // 2) acc norm 체크 (NaN/Inf/0 방어 + 게이트)
+  // -----------------------------
+  // 1) acc norm 체크 (기존 게이트)
+  // -----------------------------
   const float ax = acc->x;
   const float ay = acc->y;
   const float az = acc->z;
 
   const float an2 = ax*ax + ay*ay + az*az;
 
-  // NaN / Inf / 완전한 zero 방어
+  // NaN/Inf/0 방어
   if (!isfinite(an2) || an2 < COMP_EPS) {
+    // acc가 이상하면 그냥 gyro만 적분
+    quatIntegrateGyro(this->qComp, gyro, dt);
     return;
   }
 
-  // CMSIS 환경에서 가장 안전하게: arm_sqrt() 매크로(리턴 float) 사용
   const float an = arm_sqrt(an2);
-
-  // 기존 게이트
   if (an < COMP_ACC_MIN_NORM || an > COMP_ACC_MAX_NORM) {
+    // 1g 근처가 아니면(외력/접촉 가능성↑) → gyro만 적분
+    quatIntegrateGyro(this->qComp, gyro, dt);
     return;
   }
 
-  // 3) 측정된 gravity 방향 (body frame, 길이 1)
+  // -----------------------------
+  // 2) measured gravity (body)
+  // -----------------------------
   const float inv_an = 1.0f / an;
   float g_meas[3] = { -ax * inv_an, -ay * inv_an, -az * inv_an }; // gravity ≈ -acc
 
-  // 4) 현재 attitude 에서 예측되는 gravity 방향
+  // predicted gravity from current qComp
   float g_est[3];
   quatToBodyZ(this->qComp, g_est);
 
-  // 5) cross(g_est, g_meas) → 회전 오차 축
+  // -----------------------------
+  // 3) error = cross(g_est, g_meas)
+  //   roll/pitch only (ez = 0)
+  // -----------------------------
   float ex = g_est[1]*g_meas[2] - g_est[2]*g_meas[1];
   float ey = g_est[2]*g_meas[0] - g_est[0]*g_meas[2];
-  float ez = 0.0f; // yaw는 acc로 보정하지 않음
+  // yaw는 acc로 보정하지 않음
 
-  // 6) 작은 회전량 (Rodrigues vector) = Kp * error * dt
-  const float k = this->compKp * dt;
-  const float rx = k * ex;
-  const float ry = k * ey;
-  const float rz = k * ez;
+  // -----------------------------
+  // 4) I-term (bias estimator)
+  //   "준정지"에서만 적분 (gyro gate)
+  // -----------------------------
+  const float gx = gyro->x;
+  const float gy = gyro->y;
+  const float gz = gyro->z;
+  const float gnorm = arm_sqrt(gx*gx + gy*gy + gz*gz) + COMP_EPS;
 
-  const float angle2 = rx*rx + ry*ry + rz*rz;
-  if (angle2 > 1e-12f) {
-    const float angle = arm_sqrt(angle2);
-    const float ca = arm_cos_f32(angle * 0.5f);
-    const float sa = arm_sin_f32(angle * 0.5f);
+  if (gnorm < this->compGyroGate) {
+    // bias += Ki * e * dt
+    this->compBias[0] += this->compKi * ex * dt;
+    this->compBias[1] += this->compKi * ey * dt;
+    this->compBias[2]  = 0.0f;
 
-    const float inv_angle = 1.0f / angle;
-    const float dq[4] = { ca, sa*rx*inv_angle, sa*ry*inv_angle, sa*rz*inv_angle };
-
-    float q0 = dq[0]*this->qComp[0] - dq[1]*this->qComp[1] - dq[2]*this->qComp[2] - dq[3]*this->qComp[3];
-    float q1 = dq[1]*this->qComp[0] + dq[0]*this->qComp[1] + dq[3]*this->qComp[2] - dq[2]*this->qComp[3];
-    float q2 = dq[2]*this->qComp[0] - dq[3]*this->qComp[1] + dq[0]*this->qComp[2] + dq[1]*this->qComp[3];
-    float q3 = dq[3]*this->qComp[0] + dq[2]*this->qComp[1] - dq[1]*this->qComp[2] + dq[0]*this->qComp[3];
-
-    this->qComp[0] = q0;
-    this->qComp[1] = q1;
-    this->qComp[2] = q2;
-    this->qComp[3] = q3;
-
-    quatNormalize(this->qComp);
+    // saturate (중요!)
+    const float lim = this->compBiasLimit;
+    this->compBias[0] = clampf(this->compBias[0], -lim, lim);
+    this->compBias[1] = clampf(this->compBias[1], -lim, lim);
   }
+  // gate를 통과 못하면 bias는 유지(적분 정지)
+
+  // -----------------------------
+  // 5) corrected omega
+  //   ω_corr = gyro + Kp*e + bias
+  // -----------------------------
+  Axis3f omegaCorr;
+  omegaCorr.x = gx + this->compKp * ex + this->compBias[0];
+  omegaCorr.y = gy + this->compKp * ey + this->compBias[1];
+  omegaCorr.z = gz; // yaw는 그대로 (bias도 안 씀)
+
+  // -----------------------------
+  // 6) integrate corrected omega
+  // -----------------------------
+  quatIntegrateGyro(this->qComp, &omegaCorr, dt);
 }
 
 
 // API 구현
-void kalmanCoreSetUseComplementaryAttitudeOutput(kalmanCoreData_t* this, bool enable)
-{
-  this->useComplementaryAttitudeOutput = enable;
-}
 
 void kalmanCoreSetSlaveAttitudeToComplementary(kalmanCoreData_t* this, bool enable)
 {
@@ -281,11 +427,18 @@ void kalmanCoreDefaultParams(kalmanCoreParams_t* params)
   };
 }
 
+
+void kalmanCoreSetAttitudeOutputMode(kalmanCoreData_t* this, uint8_t mode)
+{
+  if (mode > 2) mode = 0;   // 안전장치: 0/1/2만 허용
+  this->attOutMode = mode;
+}
+
 void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs)
 {
   // Reset all data to 0 (like upon system reset)
   memset(this, 0, sizeof(kalmanCoreData_t));
-
+  this->attOutMode = 0; // default: kalman
   this->S[KC_STATE_X] = params->initialX;
   this->S[KC_STATE_Y] = params->initialY;
   this->S[KC_STATE_Z] = params->initialZ;
@@ -307,10 +460,21 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   // --- complementary attitude도 동일하게 시작 ---
   for (int i = 0; i < 4; i++) { this->qComp[i] = this->initialQuaternion[i]; }
   this->lastCompUpdateMs = nowMs;
-  this->useComplementaryAttitudeOutput = false;
   this->slaveKalmanToComplementary = false;
   this->compKp = 1.0f;
   // ---------------------------------------------
+  // ===== Mahony I (hard-coded defaults) =====
+  this->compBias[0] = 0.0f;
+  this->compBias[1] = 0.0f;
+  this->compBias[2] = 0.0f;
+
+  this->compKi        = 0.05f;  // ★ 시작점: 0.02~0.2 사이가 보통 안전
+  this->compBiasLimit = 0.30f;  // bias saturation [rad/s]
+  this->compGyroGate  = 1.50f;  // gyro norm gate [rad/s] (준정지에서만 적분)
+
+  this->fuseComplementaryToKalman = false;
+  this->compFuseStdRP = 0.05f;   // 예: 0.05 rad ~ 2.9 deg
+  this->compSlaveStdRP = 0.10f;  // 예: 0.10 rad ~ 5.7 deg
 
   // then set the initial rotation matrix to the identity. This only affects
   // the first prediction step, since in the finalization, after shifting
@@ -767,6 +931,10 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
     return false;
   }
 
+ // (A) Fuse complementary roll/pitch as a measurement into D0/D1
+  if (this->fuseComplementaryToKalman) {
+    fuseCompRollPitchToKalman(this, this->compFuseStdRP);
+  }
 
   // Matrix to rotate the attitude covariances once updated
   NO_DMA_CCM_SAFE_ZERO_INIT static float A[KC_STATE_DIM][KC_STATE_DIM];
@@ -856,6 +1024,27 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
     this->q[1] = this->qComp[1];
     this->q[2] = this->qComp[2];
     this->q[3] = this->qComp[3];
+
+  this->S[KC_STATE_D0] = 0.0f;
+  this->S[KC_STATE_D1] = 0.0f;
+
+    // -------- (B) Covariance handling after attitude injection --------
+    // D0/D1 (roll/pitch attitude-error states) are now inconsistent with injected q.
+    // We "uncorrelate" D0/D1 from all other states and reset their variances.
+    const float var_rp = fmaxf(this->compSlaveStdRP * this->compSlaveStdRP, MIN_COVARIANCE);
+
+    for (int i = 0; i < KC_STATE_DIM; i++) {
+      this->P[KC_STATE_D0][i] = 0.0f;
+      this->P[i][KC_STATE_D0] = 0.0f;
+      this->P[KC_STATE_D1][i] = 0.0f;
+      this->P[i][KC_STATE_D1] = 0.0f;
+    }
+
+    this->P[KC_STATE_D0][KC_STATE_D0] = var_rp;
+    this->P[KC_STATE_D1][KC_STATE_D1] = var_rp;
+
+    // NOTE: D2(yaw)는 건드리지 않음 (legacy yaw-consistency 유지)
+    // ---------------------------------------------------------------
   }
 
   this->R[0][0] = qUse[0] * qUse[0] + qUse[1] * qUse[1] - qUse[2] * qUse[2] - qUse[3] * qUse[3];
@@ -899,10 +1088,20 @@ bool kalmanCoreFinalize(kalmanCoreData_t* this)
 // SEUK
 void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, const Axis3f *acc)
 {
-  // 어떤 attitude를 controller에 내보낼지 결정
-  const float* qAtt = this->useComplementaryAttitudeOutput ? this->qComp : this->q;
+  float qAttLocal[4];
+  const float* qAtt = this->q; // default
 
-  // qAtt 로부터 회전행렬 R_att 계산 (출력용)
+  if (this->attOutMode == 0) {
+    qAtt = this->q;        // 0: kalman full
+  } else if (this->attOutMode == 1) {
+    qAtt = this->qComp;    // 1: comp full
+  } else {
+    // 2: mixed (tilt from comp, yaw from kalman) - quaternion level
+    buildMixedQuatYawKalmanTiltComp(this->q, this->qComp, qAttLocal);
+    qAtt = qAttLocal;
+  }
+
+  // --- 이하 너 기존 코드 그대로: qAtt로 R 계산/vel/acc/attitude/quaternion export ---
   float qw = qAtt[0], qx = qAtt[1], qy = qAtt[2], qz = qAtt[3];
 
   float R00 = qw*qw + qx*qx - qy*qy - qz*qz;
@@ -917,51 +1116,37 @@ void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, co
   float R21 = 2 * qy*qz + 2 * qw*qx;
   float R22 = qw*qw - qx*qx - qy*qy + qz*qz;
 
-  // position state is already in world frame
-  state->position = (point_t){
-      .x = this->S[KC_STATE_X],
-      .y = this->S[KC_STATE_Y],
-      .z = this->S[KC_STATE_Z]
-  };
+  state->position = (point_t){ .x = this->S[KC_STATE_X], .y = this->S[KC_STATE_Y], .z = this->S[KC_STATE_Z] };
 
-  // velocity is in body frame and needs to be rotated to world frame (출력용 R 사용)
   state->velocity = (velocity_t){
       .x = R00*this->S[KC_STATE_PX] + R01*this->S[KC_STATE_PY] + R02*this->S[KC_STATE_PZ],
       .y = R10*this->S[KC_STATE_PX] + R11*this->S[KC_STATE_PY] + R12*this->S[KC_STATE_PZ],
       .z = R20*this->S[KC_STATE_PX] + R21*this->S[KC_STATE_PY] + R22*this->S[KC_STATE_PZ]
   };
 
-  // Accelerometer measurements are in the body frame and need to be rotated to world frame.
-  // Furthermore, the legacy code requires acc.z to be acceleration without gravity.
-  // Finally, note that these accelerations are in Gs, and not in m/s^2, hence - 1 for removing gravity
   state->acc = (acc_t){
       .x = R00*acc->x + R01*acc->y + R02*acc->z,
       .y = R10*acc->x + R11*acc->y + R12*acc->z,
       .z = R20*acc->x + R21*acc->y + R22*acc->z - 1
   };
 
-  // convert the new attitude into Euler YPR from qAtt
-  float yaw = atan2f(2*(qx*qy+qw*qz) , qw*qw + qx*qx - qy*qy - qz*qz);
+  float yaw   = atan2f(2*(qx*qy+qw*qz) , qw*qw + qx*qx - qy*qy - qz*qz);
   float pitch = asinf(-2*(qx*qz - qw*qy));
-  float roll = atan2f(2*(qy*qz+qw*qx) , qw*qw - qx*qx - qy*qy + qz*qz);
+  float roll  = atan2f(2*(qy*qz+qw*qx) , qw*qw - qx*qx - qy*qy + qz*qz);
 
-  // Save attitude, adjusted for the legacy CF2 body coordinate system
   state->attitude = (attitude_t){
-      .roll = roll*RAD_TO_DEG,
+      .roll  = roll*RAD_TO_DEG,
       .pitch = -pitch*RAD_TO_DEG,
-      .yaw = yaw*RAD_TO_DEG
+      .yaw   = yaw*RAD_TO_DEG
   };
 
-  // Save quaternion (출력용 qAtt)
   state->attitudeQuaternion = (quaternion_t){
-      .w = qAtt[0],
-      .x = qAtt[1],
-      .y = qAtt[2],
-      .z = qAtt[3]
+      .w = qAtt[0], .x = qAtt[1], .y = qAtt[2], .z = qAtt[3]
   };
 
   assertStateNotNaN(this);
 }
+
 
 // Reset a state to 0 with max covariance
 // If called often, this decouples the state to the rest of the filter
