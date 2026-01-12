@@ -26,7 +26,7 @@ static float su_yaw_base   = 0.0f;
 static bool  su_pos_base_valid = false;
 
 // 파라미터: 0=position mode, 1=velocity mode
-static float su_cmd_use_vel_mode = 1.0f;
+static float su_cmd_use_vel_mode = 0.0f;
 
 // ★ 힘 커맨드 파라미터 (예: x축 force 명령)
 static float su_cmd_fx = 0.0f;
@@ -202,14 +202,14 @@ void suCmdIntegratorUpdate(float dt,
       // 3) force error 적분
       su_adm_int_Ferr_x += F_err_x * dt;
 
-      // 4) v_adm 계산
-      const float v_adm_x =
-        su_adm_K * su_adm_int_Ferr_x +
-        su_adm_D * F_err_x -
-        su_adm_M * su_adm_Fdot_lpf_x;
+      // // 4) v_adm 계산
+      // const float v_adm_x =
+      //   su_adm_K * su_adm_int_Ferr_x +
+      //   su_adm_D * F_err_x -
+      //   su_adm_M * su_adm_Fdot_lpf_x;
 
       // x 방향 속도 명령에 admittance 속도 더하기
-      vx_cmd += v_adm_x;
+      // vx_cmd += v_adm_x;
     }
 
     // ----- 기존 속도 적분 -----
@@ -241,8 +241,8 @@ void suCmdIntegratorUpdate(float dt,
 LOG_GROUP_START(su_cmd_dbg)
 LOG_ADD(LOG_FLOAT, use_vel_mode, &su_cmd_use_vel_mode)
 LOG_ADD(LOG_FLOAT, cmd_fx,       &su_cmd_fx)
-LOG_ADD(LOG_FLOAT, adm_M,        &su_adm_M)
-LOG_ADD(LOG_FLOAT, adm_D,        &su_adm_D)
+// LOG_ADD(LOG_FLOAT, adm_M,        &su_adm_M)
+// LOG_ADD(LOG_FLOAT, adm_D,        &su_adm_D)
 LOG_ADD(LOG_FLOAT, adm_K,        &su_adm_K)
 LOG_GROUP_STOP(su_cmd_dbg)
 

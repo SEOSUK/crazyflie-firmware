@@ -159,7 +159,7 @@ NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 // SEUK
 // --- 여기 추가 ---
 // Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
-static uint8_t useCompAttOutParam = 2;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
+static uint8_t useCompAttOutParam = 0;     // 0: Kalman attitude 출력, 1: complementary attitude 출력
 static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
 
 // static uint8_t useContactAwarePosUpdate = 1;
