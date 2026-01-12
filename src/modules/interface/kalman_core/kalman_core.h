@@ -195,6 +195,7 @@ void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4]
 void kalmanCoreSetFuseComplementaryToKalman(kalmanCoreData_t* this, bool enable); // NEW
 
 void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);
+void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki);
 
 void kalmanCoreSetCompFuseStdRP(kalmanCoreData_t* this, float std_rad);   // NEW
 void kalmanCoreSetCompSlaveStdRP(kalmanCoreData_t* this, float std_rad);  // NEW

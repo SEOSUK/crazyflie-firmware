@@ -316,38 +316,38 @@ void suWrenchObserverGetWorldForce(float outF[3])
 }
 
 // 로그 그룹
-// LOG_GROUP_START(suWrenchObs)
-// LOG_ADD(LOG_FLOAT, suFx,  &su_body_input_Force[0])
-// LOG_ADD(LOG_FLOAT, suFy,  &su_body_input_Force[1])
-// LOG_ADD(LOG_FLOAT, suFz,  &su_body_input_Force[2])
-// LOG_ADD(LOG_FLOAT, suTx,  &su_body_input_Torque[0])
-// LOG_ADD(LOG_FLOAT, suTy,  &su_body_input_Torque[1])
-// LOG_ADD(LOG_FLOAT, suTz,  &su_body_input_Torque[2])
+LOG_GROUP_START(suWrenchObs)
+LOG_ADD(LOG_FLOAT, suFx,  &su_body_input_Force[0])
+LOG_ADD(LOG_FLOAT, suFy,  &su_body_input_Force[1])
+LOG_ADD(LOG_FLOAT, suFz,  &su_body_input_Force[2])
+LOG_ADD(LOG_FLOAT, suTx,  &su_body_input_Torque[0])
+LOG_ADD(LOG_FLOAT, suTy,  &su_body_input_Torque[1])
+LOG_ADD(LOG_FLOAT, suTz,  &su_body_input_Torque[2])
 
-// LOG_ADD(LOG_FLOAT, suWFx, &su_world_input_Force[0])
-// LOG_ADD(LOG_FLOAT, suWFy, &su_world_input_Force[1])
-// LOG_ADD(LOG_FLOAT, suWFz, &su_world_input_Force[2])
+LOG_ADD(LOG_FLOAT, suWFx, &su_world_input_Force[0])
+LOG_ADD(LOG_FLOAT, suWFy, &su_world_input_Force[1])
+LOG_ADD(LOG_FLOAT, suWFz, &su_world_input_Force[2])
 
-// LOG_ADD(LOG_FLOAT, suWFx_scaled, &su_world_input_Force_scaled[0])
-// LOG_ADD(LOG_FLOAT, suWFy_scaled, &su_world_input_Force_scaled[1])
-// LOG_ADD(LOG_FLOAT, suWFz_scaled, &su_world_input_Force_scaled[2])
+LOG_ADD(LOG_FLOAT, suWFx_scaled, &su_world_input_Force_scaled[0])
+LOG_ADD(LOG_FLOAT, suWFy_scaled, &su_world_input_Force_scaled[1])
+LOG_ADD(LOG_FLOAT, suWFz_scaled, &su_world_input_Force_scaled[2])
 
-// LOG_ADD(LOG_FLOAT, suV,   &su_vbat_log)      // 필터링 된 전압
+LOG_ADD(LOG_FLOAT, suV,   &su_vbat_log)      // 필터링 된 전압
 
-// // dt 로깅 & MOB 출력
-// LOG_ADD(LOG_FLOAT, suDt,     &su_dt_mon)     // 모니터링용 필터된 dt
-// LOG_ADD(LOG_FLOAT, suDtraw,  &su_dt_raw)     // 생 dt
+// dt 로깅 & MOB 출력
+LOG_ADD(LOG_FLOAT, suDt,     &su_dt_mon)     // 모니터링용 필터된 dt
+LOG_ADD(LOG_FLOAT, suDtraw,  &su_dt_raw)     // 생 dt
 
-// LOG_ADD(LOG_FLOAT, suFextX, &su_world_F_hat_ext[0])     // World 힘 추정 (LPF)
-// LOG_ADD(LOG_FLOAT, suFextY, &su_world_F_hat_ext[1])
-// LOG_ADD(LOG_FLOAT, suFextZ, &su_world_F_hat_ext[2])
+LOG_ADD(LOG_FLOAT, suFextX, &su_world_F_hat_ext[0])     // World 힘 추정 (LPF)
+LOG_ADD(LOG_FLOAT, suFextY, &su_world_F_hat_ext[1])
+LOG_ADD(LOG_FLOAT, suFextZ, &su_world_F_hat_ext[2])
 
-// LOG_ADD(LOG_FLOAT, suFextX_raw, &wext_hat_raw6[0])      // World 힘 추정 (raw)
-// LOG_ADD(LOG_FLOAT, suFextY_raw, &wext_hat_raw6[1])
-// LOG_ADD(LOG_FLOAT, suFextZ_raw, &wext_hat_raw6[2])
+LOG_ADD(LOG_FLOAT, suFextX_raw, &wext_hat_raw6[0])      // World 힘 추정 (raw)
+LOG_ADD(LOG_FLOAT, suFextY_raw, &wext_hat_raw6[1])
+LOG_ADD(LOG_FLOAT, suFextZ_raw, &wext_hat_raw6[2])
 
-// LOG_ADD(LOG_FLOAT, suTextX, &su_body_Tau_hat_ext[0])    // Body 토크 추정
-// LOG_ADD(LOG_FLOAT, suTextY, &su_body_Tau_hat_ext[1])
-// LOG_ADD(LOG_FLOAT, suTextZ, &su_body_Tau_hat_ext[2])
+LOG_ADD(LOG_FLOAT, suTextX, &su_body_Tau_hat_ext[0])    // Body 토크 추정
+LOG_ADD(LOG_FLOAT, suTextY, &su_body_Tau_hat_ext[1])
+LOG_ADD(LOG_FLOAT, suTextZ, &su_body_Tau_hat_ext[2])
 
-// LOG_GROUP_STOP(suWrenchObs)
+LOG_GROUP_STOP(suWrenchObs)

@@ -26,33 +26,33 @@ float su_dob_wn   = 30.0f;      // [rad/s] 초기값 (나중에 튜닝)
 float su_dob_zeta = 0.707f;     // 2차 Butterworth 기본값
 
 // ========= PARAM 등록 =========
-// PARAM_GROUP_START(su_platform)
-// // Platform / model parameters
-// PARAM_ADD(PARAM_FLOAT, mass, &su_mass)
-// PARAM_ADD(PARAM_FLOAT, Jxx,  &Jxx)
-// PARAM_ADD(PARAM_FLOAT, Jyy,  &Jyy)
-// PARAM_ADD(PARAM_FLOAT, Jzz,  &Jzz)
-// PARAM_GROUP_STOP(su_platform)
+PARAM_GROUP_START(su_platform)
+// Platform / model parameters
+PARAM_ADD(PARAM_FLOAT, mass, &su_mass)
+PARAM_ADD(PARAM_FLOAT, Jxx,  &Jxx)
+PARAM_ADD(PARAM_FLOAT, Jyy,  &Jyy)
+PARAM_ADD(PARAM_FLOAT, Jzz,  &Jzz)
+PARAM_GROUP_STOP(su_platform)
 
-// // Wrench/MOB 파라미터: 기존 su_wrench 그룹명 유지(로그/툴 호환성)
-// PARAM_GROUP_START(su_wrench)
-// // 관측 이득
-// PARAM_ADD(PARAM_FLOAT, Kf,              &su_Kf)
-// PARAM_ADD(PARAM_FLOAT, Ktau,            &su_Ktau)
-// // Deadzone
-// PARAM_ADD(PARAM_FLOAT, deadzone_F,      &su_deadzone_F)
-// PARAM_ADD(PARAM_FLOAT, deadzone_T,      &su_deadzone_T)
-// // 전압-추력 모델
-// PARAM_ADD(PARAM_FLOAT, voltage_model_a, &su_voltage_model_a)
-// PARAM_ADD(PARAM_FLOAT, voltage_model_b, &su_voltage_model_b)
-// // 필터 게인
-// PARAM_ADD(PARAM_FLOAT, vbat_alpha,      &su_vbat_alpha)
-// PARAM_ADD(PARAM_FLOAT, dt_alpha,        &su_dt_alpha)
-// PARAM_ADD(PARAM_FLOAT, mob_alpha,       &su_mob_alpha)
-// PARAM_ADD(PARAM_FLOAT, cmd_fx,        &su_cmd_fx)
+// Wrench/MOB 파라미터: 기존 su_wrench 그룹명 유지(로그/툴 호환성)
+PARAM_GROUP_START(su_wrench)
+// 관측 이득
+PARAM_ADD(PARAM_FLOAT, Kf,              &su_Kf)
+PARAM_ADD(PARAM_FLOAT, Ktau,            &su_Ktau)
+// Deadzone
+PARAM_ADD(PARAM_FLOAT, deadzone_F,      &su_deadzone_F)
+PARAM_ADD(PARAM_FLOAT, deadzone_T,      &su_deadzone_T)
+// 전압-추력 모델
+PARAM_ADD(PARAM_FLOAT, voltage_model_a, &su_voltage_model_a)
+PARAM_ADD(PARAM_FLOAT, voltage_model_b, &su_voltage_model_b)
+// 필터 게인
+PARAM_ADD(PARAM_FLOAT, vbat_alpha,      &su_vbat_alpha)
+PARAM_ADD(PARAM_FLOAT, dt_alpha,        &su_dt_alpha)
+PARAM_ADD(PARAM_FLOAT, mob_alpha,       &su_mob_alpha)
+PARAM_ADD(PARAM_FLOAT, cmd_fx,        &su_cmd_fx)
 
-// // DOB 용임
-// PARAM_ADD(PARAM_FLOAT, dob_wn,          &su_dob_wn)
-// PARAM_ADD(PARAM_FLOAT, dob_zeta,        &su_dob_zeta)
+// DOB 용임
+PARAM_ADD(PARAM_FLOAT, dob_wn,          &su_dob_wn)
+PARAM_ADD(PARAM_FLOAT, dob_zeta,        &su_dob_zeta)
 
-// PARAM_GROUP_STOP(su_wrench)
+PARAM_GROUP_STOP(su_wrench)

@@ -401,6 +401,19 @@ void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp)
   this->compKp = kp;
 }
 
+void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki)
+{
+  // 안전장치 (원하면 범위 조절)
+  if (ki < 0.0f) {
+    ki = 0.0f;
+  }
+  if (ki > 5.0f) {   // Mahony I는 너무 크게 잡으면 바로 발산/드리프트 유발 가능
+    ki = 5.0f;
+  }
+  this->compKi = ki;
+}
+
+
 
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4])
 {
@@ -461,13 +474,13 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   for (int i = 0; i < 4; i++) { this->qComp[i] = this->initialQuaternion[i]; }
   this->lastCompUpdateMs = nowMs;
   this->slaveKalmanToComplementary = false;
-  this->compKp = 1.0f;
   // ---------------------------------------------
   // ===== Mahony I (hard-coded defaults) =====
   this->compBias[0] = 0.0f;
   this->compBias[1] = 0.0f;
   this->compBias[2] = 0.0f;
 
+  this->compKp = 1.0f;
   this->compKi        = 0.05f;  // ★ 시작점: 0.02~0.2 사이가 보통 안전
   this->compBiasLimit = 0.30f;  // bias saturation [rad/s]
   this->compGyroGate  = 1.50f;  // gyro norm gate [rad/s] (준정지에서만 적분)
