@@ -1,11 +1,14 @@
 ## Status
-- ✅ Tilted state estimation achieved using a hybrid **Complementary (Mahony) + Kalman Filter** structure (commit `386d056`, 2026-01-10).
+- 🧪 Currently on the `flyingpen_temp` branch for **code cleanup and structural refactoring**.
+- 🔍 Comprehensive **validation and stress testing** of the hybrid **Complementary (Mahony) + Kalman Filter**–based tilted state estimation is in progress.
 - ⏳ Further improvements are required for acceleration bias handling and slow attitude recovery.
 
 ## History
 - Forked from upstream Bitcraze crazyflie-firmware on 2025-12-08
 - FlyingPen branch under active development
-- Milestone: Validation of a hybrid Complementary (Mahony) and Kalman Filter–based tilted state estimation framework (commit `386d056`, 2026-01-10)
+- Milestone: Tilted state estimation achieved using a hybrid Complementary (Mahony) and Kalman Filter structure (commit `386d056`, 2026-01-10)
+- Current phase: Code cleanup, refactoring, and systematic validation on `flyingpen_temp`
+
 
 
 # Crazyflie Firmware  [![CI](https://github.com/bitcraze/crazyflie-firmware/workflows/CI/badge.svg)](https://github.com/bitcraze/crazyflie-firmware/actions?query=workflow%3ACI)
