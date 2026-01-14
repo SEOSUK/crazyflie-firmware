@@ -113,7 +113,7 @@ static SemaphoreHandle_t dataMutex;
 static StaticSemaphore_t dataMutexBuffer;
 
 static uint8_t fuseCompAttToKalmanParam = 0; // (A) 0 off, 1 on
-static float compFuseStdRPParam = 0.05f;     // rad
+static float compFuseStdRPParam = 0.7f;     // rad
 static float compSlaveStdRPParam = 0.10f;    // rad
 
 
@@ -149,7 +149,7 @@ NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 // SEUK
 // --- 여기 추가 ---
 // Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
-static uint8_t useCompAttOutParam = 0;     // 0: Kalman attitude 출력, 1: complementary attitude 출력, 2: complementary attitude (yaw는 kalman)
+static uint8_t useCompAttOutParam = 2;     // 0: Kalman attitude 출력, 1: complementary attitude 출력, 2: complementary attitude (yaw는 kalman)
 static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
 
 // static uint8_t useContactAwarePosUpdate = 1;
@@ -609,8 +609,8 @@ LOG_GROUP_STOP(outlierf)
  */
 PARAM_GROUP_START(kalman)
 
-  PARAM_ADD_CORE(PARAM_UINT8, fuseCompAttToKalman, &fuseCompAttToKalmanParam)
-  PARAM_ADD_CORE(PARAM_FLOAT, compFuseStdRP, &compFuseStdRPParam)
+  // PARAM_ADD_CORE(PARAM_UINT8, fuseCompAttToKalman, &fuseCompAttToKalmanParam)
+  // PARAM_ADD_CORE(PARAM_FLOAT, compFuseStdRP, &compFuseStdRPParam)
   // PARAM_ADD_CORE(PARAM_FLOAT, compSlaveStdRP, &compSlaveStdRPParam)
   /*
    * @brief use complementary attitude output mode

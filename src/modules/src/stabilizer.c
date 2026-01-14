@@ -340,7 +340,7 @@ static void stabilizerTask(void* param)
 
       stateEstimator(&state, stabilizerStep);
 
-    const float dt_main = 1.0f / 1000.0f;
+    const float dt_main = 1.0f / 100.0f;
     suVelFromPosUpdate(&state, dt_main);
 
       const bool areMotorsAllowedToRun = supervisorAreMotorsAllowedToRun();
@@ -359,7 +359,7 @@ static void stabilizerTask(void* param)
     // MOBDOB Sellection
     suWrenchObserverGetWorldForce(f_ext_world);  // su_wrench_observer에서 마지막 추정값 가져오기 MOBDOB
     // suWrenchObserverDOBGetWorldForce(f_ext_world);
-    suCmdIntegratorUpdate(1.0f/1000.0f,
+    suCmdIntegratorUpdate(1.0f/100.0f,
                           &setpoint,
                           &state,
                           f_ext_world,          // ★ 힘 추정 전달
