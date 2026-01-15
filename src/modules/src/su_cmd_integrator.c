@@ -26,7 +26,7 @@ static float su_yaw_base   = 0.0f;
 static bool  su_pos_base_valid = false;
 
 // 파라미터: 0=position mode, 1=velocity mode
-static float su_cmd_use_vel_mode = 0.0f;
+static float su_cmd_use_vel_mode = 1.0f;
 
 // ★ 힘 커맨드 파라미터 (예: x축 force 명령)
 static float su_cmd_fx = 0.0f;
