@@ -67,6 +67,8 @@
 #endif
 
 static bool isInit;
+static bool su_cmdIntegrator_enabled = false;
+
 
 static uint32_t inToOutLatency;
 
@@ -132,6 +134,19 @@ STATIC_MEM_TASK_ALLOC(rateSupervisorTask, RATE_SUPERVISOR_TASK_STACKSIZE);
 
 static void stabilizerTask(void* param);
 static void rateSupervisorTask(void* param);
+
+static inline bool suSetpointIsActive(const setpoint_t* sp)
+{
+  return (sp->mode.x     != modeDisable) ||
+         (sp->mode.y     != modeDisable) ||
+         (sp->mode.z     != modeDisable) ||
+         (sp->mode.roll  != modeDisable) ||
+         (sp->mode.pitch != modeDisable) ||
+         (sp->mode.yaw   != modeDisable) ||
+         (sp->mode.quat  != modeDisable);
+}
+
+
 
 static void calcSensorToOutputLatency(const sensorData_t *sensorData)
 {
@@ -340,8 +355,10 @@ static void stabilizerTask(void* param)
 
       stateEstimator(&state, stabilizerStep);
 
-    const float dt_main = 1.0f / 100.0f;
-    suVelFromPosUpdate(&state, dt_main);
+    if (RATE_DO_EXECUTE(RATE_100_HZ, stabilizerStep)) {
+      suVelFromPosUpdate(&state, 1.0f / 100.0f);
+    }
+
 
       const bool areMotorsAllowedToRun = supervisorAreMotorsAllowedToRun();
 
@@ -353,17 +370,26 @@ static void stabilizerTask(void* param)
       }
       commanderGetSetpoint(&setpoint, &state);
 
-    // 여기 추가: 1000 Hz로 vel/pos 통합 + 외란 힘 기반 admittance
-    float f_ext_world[3];
+      // 아직 enable 안 됐으면, "유효한 setpoint"가 들어올 때까지 integrator 호출 안 함
+      if (!su_cmdIntegrator_enabled) {
+        if (suSetpointIsActive(&setpoint)) {
+          su_cmdIntegrator_enabled = true;
+          suCmdIntegratorInit();  // 첫 활성화 순간에 내부 상태 동기화 (추천)
+        }
+      }
 
-    // MOBDOB Sellection
-    suWrenchObserverGetWorldForce(f_ext_world);  // su_wrench_observer에서 마지막 추정값 가져오기 MOBDOB
-    // suWrenchObserverDOBGetWorldForce(f_ext_world);
-    suCmdIntegratorUpdate(1.0f/100.0f,
-                          &setpoint,
-                          &state,
-                          f_ext_world,          // ★ 힘 추정 전달
-                          &setpoint);
+      if (su_cmdIntegrator_enabled) {
+        float f_ext_world[3];
+        suWrenchObserverGetWorldForce(f_ext_world);
+
+        if (RATE_DO_EXECUTE(RATE_100_HZ, stabilizerStep)) {
+          suCmdIntegratorUpdate(1.0f/100.0f,
+                                &setpoint,
+                                &state,
+                                f_ext_world,
+                                &setpoint);
+        }
+      }
 
       // Critical for safety, be careful if you modify this code!
       // Let the supervisor update it's view of the current situation
