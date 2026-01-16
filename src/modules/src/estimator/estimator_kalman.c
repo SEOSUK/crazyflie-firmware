@@ -112,6 +112,11 @@ static SemaphoreHandle_t runTaskSemaphore;
 static SemaphoreHandle_t dataMutex;
 static StaticSemaphore_t dataMutexBuffer;
 
+static uint8_t fuseCompAttToKalmanParam = 0; // (A) 0 off, 1 on
+static float compFuseStdRPParam = 0.7f;     // rad
+static float compSlaveStdRPParam = 0.10f;    // rad
+
+
 
 /**
  * Tuning parameters
@@ -141,6 +146,16 @@ static bool robustTdoa = false;
 
 NO_DMA_CCM_SAFE_ZERO_INIT static kalmanCoreData_t coreData;
 
+// SEUK
+// --- 여기 추가 ---
+// Parameters (uint8 → bool 로 변환해서 kalmanCore에 넘김)
+static uint8_t useCompAttOutParam = 2;     // 0: Kalman attitude 출력, 1: complementary attitude 출력, 2: complementary attitude (yaw는 kalman)
+static uint8_t slaveAttToCompParam = 0;    // 0: internal Kalman q/R 유지, 1: complementary 로 동기화
+
+// static uint8_t useContactAwarePosUpdate = 1;
+// ---------------
+
+
 /**
  * Internal variables. Note that static declaration results in default initialization (to 0)
  */
@@ -154,7 +169,8 @@ static Axis3f gyroLatest;
 
 static OutlierFilterTdoaState_t outlierFilterTdoaState;
 static OutlierFilterLhState_t sweepOutlierFilterState;
-
+static float compKpParam = 0.7f;  // complementary roll/pitch correction gain
+static float compKiParam = 0.03f;  // NEW: Mahony I gain
 
 // Indicates that the internal state is corrupt and should be reset
 bool resetEstimation = false;
@@ -205,7 +221,9 @@ void estimatorKalmanTaskInit() {
   dataMutex = xSemaphoreCreateMutexStatic(&dataMutexBuffer);
 
   STATIC_MEM_TASK_CREATE(kalmanTask, kalmanTask, KALMAN_TASK_NAME, NULL, KALMAN_TASK_PRI);
-
+  kalmanCoreSetCompKp(&coreData, compKpParam);
+  kalmanCoreSetCompKi(&coreData, compKiParam);   // NEW  
+  
   isInit = true;
 }
 
@@ -224,6 +242,19 @@ static void kalmanTask(void* parameters) {
   while (true) {
     xSemaphoreTake(runTaskSemaphore, portMAX_DELAY);
     nowMs = T2M(xTaskGetTickCount()); // would be nice if this had a precision higher than 1ms...
+
+
+    // --- param 값을 coreData 플래그에 반영 ---
+    kalmanCoreSetAttitudeOutputMode(&coreData, useCompAttOutParam);
+    kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
+    kalmanCoreSetCompKp(&coreData, compKpParam);
+    kalmanCoreSetCompKi(&coreData, compKiParam);    
+    
+    // ----------------------------------------
+    kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
+    kalmanCoreSetCompFuseStdRP(&coreData, compFuseStdRPParam);
+    kalmanCoreSetCompSlaveStdRP(&coreData, compSlaveStdRPParam);
+
 
     if (resetEstimation) {
       estimatorKalmanInit();
@@ -304,6 +335,10 @@ static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlyi
    * we therefore consume all measurements since the last loop, rather than accumulating
    */
 
+
+
+
+
   // Pull the latest sensors values of interest; discard the rest
   measurement_t m;
   while (estimatorDequeue(&m)) {
@@ -319,7 +354,7 @@ static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlyi
         break;
       case MeasurementTypePosition:
         kalmanCoreUpdateWithPosition(&coreData, &m.data.position);
-        break;
+        break; 
       case MeasurementTypePose:
         kalmanCoreUpdateWithPose(&coreData, &m.data.pose);
         break;
@@ -387,6 +422,16 @@ void estimatorKalmanInit(void)
 
   uint32_t nowMs = T2M(xTaskGetTickCount());
   kalmanCoreInit(&coreData, &coreParams, nowMs);
+
+  // SEUK
+  // init 시에도 param과 core 플래그를 동기화
+  kalmanCoreSetAttitudeOutputMode(&coreData, useCompAttOutParam); // 0/1/2
+  kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));  
+
+  kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
+  kalmanCoreSetCompFuseStdRP(&coreData, compFuseStdRPParam);
+  kalmanCoreSetCompSlaveStdRP(&coreData, compSlaveStdRPParam);
+  
 }
 
 bool estimatorKalmanTest(void)
@@ -508,6 +553,34 @@ LOG_GROUP_START(kalman)
   * @brief Estimated Attitude quarternion z
   */
   LOG_ADD(LOG_FLOAT, q3, &coreData.q[3])
+
+// SEUK
+  /**
+  * @brief Complementary Attitude quaternion w
+  */
+  LOG_ADD(LOG_FLOAT, qComp0, &coreData.qComp[0])
+  /**
+  * @brief Complementary Attitude quaternion x
+  */
+  LOG_ADD(LOG_FLOAT, qComp1, &coreData.qComp[1])
+  /**
+  * @brief Complementary Attitude quaternion y
+  */
+  LOG_ADD(LOG_FLOAT, qComp2, &coreData.qComp[2])
+  /**
+  * @brief Complementary Attitude quaternion z
+  */
+  LOG_ADD(LOG_FLOAT, qComp3, &coreData.qComp[3])
+
+  /**
+  * @brief use complementary attitude for output (0: kalman, 1: complementary)
+  */
+  LOG_ADD(LOG_UINT8, useCompAttOut, &useCompAttOutParam)
+  /**
+  * @brief slave internal kalman attitude to complementary (0: off, 1: on)
+  */
+  LOG_ADD(LOG_UINT8, slaveAttToComp, &slaveAttToCompParam)  
+
   /**
   * @brief Statistics rate of update step
   */
@@ -520,6 +593,10 @@ LOG_GROUP_START(kalman)
   * @brief Statistics rate full estimation step
   */
   STATS_CNT_RATE_LOG_ADD(rtFinal, &finalizeCounter)
+LOG_ADD(LOG_FLOAT, accX_ext, &taskEstimatorState.acc.x)
+LOG_ADD(LOG_FLOAT, accY_ext, &taskEstimatorState.acc.y)
+LOG_ADD(LOG_FLOAT, accZ_ext, &taskEstimatorState.acc.z)
+
 LOG_GROUP_STOP(kalman)
 
 LOG_GROUP_START(outlierf)
@@ -531,7 +608,26 @@ LOG_GROUP_STOP(outlierf)
  *     estimator
  */
 PARAM_GROUP_START(kalman)
-/**
+
+  // PARAM_ADD_CORE(PARAM_UINT8, fuseCompAttToKalman, &fuseCompAttToKalmanParam)
+  // PARAM_ADD_CORE(PARAM_FLOAT, compFuseStdRP, &compFuseStdRPParam)
+  // PARAM_ADD_CORE(PARAM_FLOAT, compSlaveStdRP, &compSlaveStdRPParam)
+  /*
+   * @brief use complementary attitude output mode
+   * 0: kalman
+   * 1: complementary (full)
+   * 2: complementary roll/pitch + kalman yaw
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, useCompAttOut, &useCompAttOutParam)
+  /**
+   * @brief Slave internal Kalman attitude (q,R) to complementary (0: off, 1: on)
+   */
+  PARAM_ADD_CORE(PARAM_UINT8 | PARAM_PERSISTENT, slaveAttToComp, &slaveAttToCompParam)
+  
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKi, &compKiParam)
+
+  /**
  * @brief Reset the kalman estimator
  */
   PARAM_ADD_CORE(PARAM_UINT8, resetEstimation, &resetEstimation)
