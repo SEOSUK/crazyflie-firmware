@@ -61,9 +61,13 @@
 #include "su_vel_from_pos.h"
 
 static bool isInit;
+
+
 // wrench observer 속도
 #ifndef SU_WRENCH_RATE_HZ
 #define SU_WRENCH_RATE_HZ 250 
+#endif
+
 
 static uint32_t inToOutLatency;
 
@@ -194,6 +198,7 @@ void stabilizerInit(StateEstimatorType estimator)
 
   STATIC_MEM_TASK_CREATE(stabilizerTask, stabilizerTask, STABILIZER_TASK_NAME, NULL, STABILIZER_TASK_PRI);
 
+  suVelFromPosInit();  
   suWrenchObserverInit(); // SEUK MOB
 
   isInit = true;
@@ -333,6 +338,9 @@ static void stabilizerTask(void* param)
 
       stateEstimator(&state, stabilizerStep);
 
+    const float dt_main = 1.0f / 1000.0f;
+    suVelFromPosUpdate(&state, dt_main);
+          
       const bool areMotorsAllowedToRun = supervisorAreMotorsAllowedToRun();
 
       // Critical for safety, be careful if you modify this code!
