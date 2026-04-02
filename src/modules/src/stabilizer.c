@@ -49,7 +49,6 @@
 #include "collision_avoidance.h"
 #include "health.h"
 #include "supervisor.h"
-#include "su_wrench_observer.h" // SEUK
 
 #include "estimator.h"
 #include "usddeck.h"
@@ -57,6 +56,9 @@
 #include "statsCnt.h"
 #include "static_mem.h"
 #include "rateSupervisor.h"
+
+#include "su_wrench_observer.h" // SEUK
+#include "su_vel_from_pos.h"
 
 static bool isInit;
 // wrench observer 속도
