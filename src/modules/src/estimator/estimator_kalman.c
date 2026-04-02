@@ -169,8 +169,8 @@ static Axis3f gyroLatest;
 
 static OutlierFilterTdoaState_t outlierFilterTdoaState;
 static OutlierFilterLhState_t sweepOutlierFilterState;
-static float compKpParam = 1.0f;  // complementary roll/pitch correction gain
-static float compKiParam = 0.05f;  // NEW: Mahony I gain
+static float compKpParam = 0.7f;  // complementary roll/pitch correction gain
+static float compKiParam = 0.03f;  // NEW: Mahony I gain
 
 // Indicates that the internal state is corrupt and should be reset
 bool resetEstimation = false;

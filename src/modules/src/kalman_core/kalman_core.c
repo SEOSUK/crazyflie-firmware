@@ -122,8 +122,8 @@ static void quatEnsurePositiveWLocal(float q[4])
 // -------------------- Complementary attitude filter (quaternion) --------------------
 
 #define COMP_EPS          (1e-6f)
-#define COMP_ACC_MIN_NORM (9.0f)
-#define COMP_ACC_MAX_NORM (11.f)
+#define COMP_ACC_MIN_NORM (5.0f)
+#define COMP_ACC_MAX_NORM (15.f)
 
 // q 정규화
 static void quatNormalize(float q[4])
@@ -480,8 +480,8 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
   this->compBias[1] = 0.0f;
   this->compBias[2] = 0.0f;
 
-  this->compKp = 1.0f;
-  this->compKi        = 0.05f;  // ★ 시작점: 0.02~0.2 사이가 보통 안전
+  this->compKp = 2.0f;
+  this->compKi        = 0.1f;  // ★ 시작점: 0.02~0.2 사이가 보통 안전
   this->compBiasLimit = 0.30f;  // bias saturation [rad/s]
   this->compGyroGate  = 1.50f;  // gyro norm gate [rad/s] (준정지에서만 적분)
 
