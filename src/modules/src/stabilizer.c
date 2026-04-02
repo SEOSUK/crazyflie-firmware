@@ -49,6 +49,7 @@
 #include "collision_avoidance.h"
 #include "health.h"
 #include "supervisor.h"
+#include "su_wrench_observer.h" // SEUK
 
 #include "estimator.h"
 #include "usddeck.h"
@@ -58,6 +59,9 @@
 #include "rateSupervisor.h"
 
 static bool isInit;
+// wrench observer 속도
+#ifndef SU_WRENCH_RATE_HZ
+#define SU_WRENCH_RATE_HZ 250 
 
 static uint32_t inToOutLatency;
 
@@ -187,6 +191,8 @@ void stabilizerInit(StateEstimatorType estimator)
   controllerType = controllerGetType();
 
   STATIC_MEM_TASK_CREATE(stabilizerTask, stabilizerTask, STABILIZER_TASK_NAME, NULL, STABILIZER_TASK_PRI);
+
+  suWrenchObserverInit(); // SEUK MOB
 
   isInit = true;
 }
@@ -354,7 +360,21 @@ static void stabilizerTask(void* param)
         controlMotors(&control);
       } else {
         motorsStop();
+
+        motorPwm.motors.m1 = motorPwm.motors.m2 = 0; // SEUK 모터 멈췄을때 로그에서도 0 뜨게 하기 위함임
+        motorPwm.motors.m3 = motorPwm.motors.m4 = 0; // SEUK
       }
+
+
+      // wrench observer랑 wrench observer dob랑 둘 중에 하나만 켜라 !!!!
+      // Run the wrench observer at ~250 Hz (decimated from 1 kHz loop)
+      // MOB
+      if (RATE_DO_EXECUTE(RATE_250_HZ, stabilizerStep)) {
+        float vW[3];
+        suVelFromPosGetWorld(vW);
+    
+        suWrenchObserverUpdate(&state, &motorPwm, &sensorData.gyro, vW);
+      }      // Compute compressed log formats      
 
       // Compute compressed log formats
       compressState();
