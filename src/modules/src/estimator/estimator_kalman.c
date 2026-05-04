@@ -171,6 +171,7 @@ static OutlierFilterTdoaState_t outlierFilterTdoaState;
 static OutlierFilterLhState_t sweepOutlierFilterState;
 static float compKpParam = 0.7f;  // complementary roll/pitch correction gain
 static float compKiParam = 0.03f;  // NEW: Mahony I gain
+static float compPitchBiasParam = 0.0f;  // [rad], output-only pitch bias for mixed complementary tilt path
 
 // Indicates that the internal state is corrupt and should be reset
 bool resetEstimation = false;
@@ -223,6 +224,7 @@ void estimatorKalmanTaskInit() {
   STATIC_MEM_TASK_CREATE(kalmanTask, kalmanTask, KALMAN_TASK_NAME, NULL, KALMAN_TASK_PRI);
   kalmanCoreSetCompKp(&coreData, compKpParam);
   kalmanCoreSetCompKi(&coreData, compKiParam);   // NEW  
+  kalmanCoreSetCompPitchBias(&coreData, compPitchBiasParam);
   
   isInit = true;
 }
@@ -249,6 +251,7 @@ static void kalmanTask(void* parameters) {
     kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));
     kalmanCoreSetCompKp(&coreData, compKpParam);
     kalmanCoreSetCompKi(&coreData, compKiParam);    
+    kalmanCoreSetCompPitchBias(&coreData, compPitchBiasParam);
     
     // ----------------------------------------
     kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
@@ -427,6 +430,7 @@ void estimatorKalmanInit(void)
   // init 시에도 param과 core 플래그를 동기화
   kalmanCoreSetAttitudeOutputMode(&coreData, useCompAttOutParam); // 0/1/2
   kalmanCoreSetSlaveAttitudeToComplementary(&coreData, (slaveAttToCompParam != 0));  
+  kalmanCoreSetCompPitchBias(&coreData, compPitchBiasParam);
 
   kalmanCoreSetFuseComplementaryToKalman(&coreData, (fuseCompAttToKalmanParam != 0));
   kalmanCoreSetCompFuseStdRP(&coreData, compFuseStdRPParam);
@@ -626,6 +630,7 @@ PARAM_GROUP_START(kalman)
   
   PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKp, &compKpParam)
   PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compKi, &compKiParam)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, compPitchBias, &compPitchBiasParam)
 
   /**
  * @brief Reset the kalman estimator

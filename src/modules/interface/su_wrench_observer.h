@@ -16,6 +16,7 @@ void suWrenchObserverUpdate(const state_t *state,
                             const float vW[3]);
                             
 void suWrenchObserverGetWorldForce(float outF[3]);
+void suWrenchObserverRequestZeroBias(void);
 
 #ifdef __cplusplus
 }

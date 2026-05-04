@@ -21,6 +21,8 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+
 // -------- Platform / common --------
 extern float su_mass;             // [kg]
 extern float Jxx;                 // [kg·m^2]
@@ -40,6 +42,7 @@ extern float su_voltage_model_b;  // [-] thrust-voltage model 'b'
 extern float su_vbat_alpha;       // [0..1] battery voltage LPF alpha
 extern float su_dt_alpha;         // [0..1] dt monitor LPF alpha
 extern float su_mob_alpha;        // [0..1] MOB output LPF alpha
+extern uint8_t su_zero_bias;      // [0/1] trigger MOB bias zeroing
 
 extern float su_dob_wn;      // [rad/s] Q-filter natural frequency (2π * fc)
 extern float su_dob_zeta;    // [-] Q-filter damping ratio (Butterworth ≈ 0.707f)

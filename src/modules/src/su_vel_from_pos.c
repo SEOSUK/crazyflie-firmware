@@ -71,7 +71,7 @@ void suVelFromPosUpdate(const state_t *state, float dt)
 
   // 1st-order LPF (cutoff ≈ 5 Hz)
   const float TWO_PI = 6.28318530718f;
-  const float fc     = 2.0f;  // [Hz]
+  const float fc     = 1.0f;  // [Hz]
   float alpha_v = 1.0f - expf(-TWO_PI * fc * dt);
 
   if (alpha_v < 0.0f) alpha_v = 0.0f;

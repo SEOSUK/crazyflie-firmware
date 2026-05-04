@@ -380,8 +380,11 @@ static void stabilizerTask(void* param)
       // Run the wrench observer at ~250 Hz (decimated from 1 kHz loop)
       // MOB
       if (RATE_DO_EXECUTE(RATE_250_HZ, stabilizerStep)) {
-        float vW[3];
-        suVelFromPosGetWorld(vW);
+        float vW[3] = {
+          state.velocity.x,
+          state.velocity.y,
+          state.velocity.z
+        };
     
         suWrenchObserverUpdate(&state, &motorPwm, &sensorData.gyro, vW);
       }      // Compute compressed log formats      

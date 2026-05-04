@@ -116,6 +116,7 @@ typedef struct {
   
   // Complementary roll/pitch correction gain (KP)
   float compKp;                          // <-- 이번에 param으로 뺄 값
+  float compPitchBias;                   // [rad], output-only pitch bias for complementary tilt path
 
   float compFuseStdRP;                   // (A) roll/pitch meas std [rad] (NEW)
   float compSlaveStdRP;                  // (B) post-injection std for D0/D1 [rad] (NEW)
@@ -196,6 +197,7 @@ void kalmanCoreSetFuseComplementaryToKalman(kalmanCoreData_t* this, bool enable)
 
 void kalmanCoreSetCompKp(kalmanCoreData_t* this, float kp);
 void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki);
+void kalmanCoreSetCompPitchBias(kalmanCoreData_t* this, float bias_rad);
 
 void kalmanCoreSetCompFuseStdRP(kalmanCoreData_t* this, float std_rad);   // NEW
 void kalmanCoreSetCompSlaveStdRP(kalmanCoreData_t* this, float std_rad);  // NEW

@@ -20,6 +20,8 @@
 // ==============================
 static float su_body_input_Force[3];
 static float su_body_input_Force_scaled[3];
+static float su_motor_force[4];
+static float su_motor_force_scaled[4];
 
 static float su_world_input_Force[3];              // [Fx, Fy, Fz] (World)
 static float su_world_input_Force_scaled[3];       // [Fx, Fy, Fz] (World)
@@ -30,8 +32,14 @@ static float su_body_input_Torque_scaled[3];
 // === MOB 추정치 (로그 대상) ===
 static float su_world_F_hat_ext[3];     // [Fx, Fy, Fz] (World, env쪽 힘)
 static float su_body_Tau_hat_ext[3];    // [Tx, Ty, Tz] (body, env쪽 토크)
+static float su_world_F_hat_ext_lpf[3];
+static float su_body_Tau_hat_ext_lpf[3];
+static float su_world_F_hat_bias[3];
+static float su_body_Tau_hat_bias[3];
+static uint32_t su_zero_bias_count = 0;
 static float r6[6];
 static float wext_hat_raw6[6];
+static uint8_t su_zero_bias_request = 0;
 
 // === 6D MOB 내부상태: p̂ = [m v_W ; J ω_B] ===
 static float su_p6_hat[6] = {0};        // p̂ = [px,py,pz,Lx,Ly,Lz]
@@ -55,6 +63,36 @@ static inline float lpf1(float y_prev, float x, float alpha) {
     return y_prev + alpha * (x - y_prev);
 }
 
+void suWrenchObserverRequestZeroBias(void)
+{
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 3; ++i) {
+        su_world_F_hat_bias[i] = su_world_F_hat_ext_lpf[i];
+        su_body_Tau_hat_bias[i] = su_body_Tau_hat_ext_lpf[i];
+        su_world_F_hat_ext[i] = 0.0f;
+        su_body_Tau_hat_ext[i] = 0.0f;
+    }
+    for (int i = 0; i < 6; ++i) {
+        r6[i] = 0.0f;
+        wext_hat_raw6[i] = 0.0f;
+    }
+    su_zero_bias_count++;
+    su_zero_bias_request = 0;
+    taskEXIT_CRITICAL();
+
+    DEBUG_PRINT("SU Wrench observer bias reset\n");
+}
+
+static void suWrenchObserverZeroBiasCallback(void)
+{
+    if (su_zero_bias_request == 0) {
+        return;
+    }
+
+    suWrenchObserverRequestZeroBias();
+    su_zero_bias_request = 0;
+}
+
 void suWrenchObserverInit(void) {
 
     for (int i = 0; i < 3; ++i) {
@@ -66,6 +104,14 @@ void suWrenchObserverInit(void) {
         su_body_input_Torque_scaled[i] = 0.0f;
         su_world_F_hat_ext[i]          = 0.0f;
         su_body_Tau_hat_ext[i]         = 0.0f;
+        su_world_F_hat_ext_lpf[i]      = 0.0f;
+        su_body_Tau_hat_ext_lpf[i]     = 0.0f;
+        su_world_F_hat_bias[i]         = 0.0f;
+        su_body_Tau_hat_bias[i]        = 0.0f;
+    }
+    for (int i = 0; i < 4; ++i) {
+        su_motor_force[i] = 0.0f;
+        su_motor_force_scaled[i] = 0.0f;
     }
 
     // 초기 전압 샘플로 LPF 초기화
@@ -131,11 +177,19 @@ void suWrenchObserverUpdate(const state_t *state,
     const float f2 = pwm2N * (float)motorPwm->motors.m2;
     const float f3 = pwm2N * (float)motorPwm->motors.m3;
     const float f4 = pwm2N * (float)motorPwm->motors.m4;
+    su_motor_force[0] = f1;
+    su_motor_force[1] = f2;
+    su_motor_force[2] = f3;
+    su_motor_force[3] = f4;
 
     const float f1_scale = voltage_model * pwm2N * (float)motorPwm->motors.m1;
     const float f2_scale = voltage_model * pwm2N * (float)motorPwm->motors.m2;
     const float f3_scale = voltage_model * pwm2N * (float)motorPwm->motors.m3;
     const float f4_scale = voltage_model * pwm2N * (float)motorPwm->motors.m4;
+    su_motor_force_scaled[0] = f1_scale;
+    su_motor_force_scaled[1] = f2_scale;
+    su_motor_force_scaled[2] = f3_scale;
+    su_motor_force_scaled[3] = f4_scale;
 
     // ---- 2) Body-frame Force
     const float Fz = f1 + f2 + f3 + f4;
@@ -296,13 +350,18 @@ void suWrenchObserverUpdate(const state_t *state,
     // wext_hat_raw6 = "드론이 받은 힘/토크" (env → drone)
     // 우리가 로그/외부에 내보내고 싶은 건 "드론이 낸 힘/토크" (drone → env)
     // => F_env = - F_ext  (Newton 3rd law)
-    su_world_F_hat_ext[0] = lpf1(su_world_F_hat_ext[0], -wext_hat_raw6[0], su_mob_alpha);
-    su_world_F_hat_ext[1] = lpf1(su_world_F_hat_ext[1], -wext_hat_raw6[1], su_mob_alpha);
-    su_world_F_hat_ext[2] = lpf1(su_world_F_hat_ext[2], -wext_hat_raw6[2], su_mob_alpha);
+    su_world_F_hat_ext_lpf[0] = lpf1(su_world_F_hat_ext_lpf[0], -wext_hat_raw6[0], su_mob_alpha);
+    su_world_F_hat_ext_lpf[1] = lpf1(su_world_F_hat_ext_lpf[1], -wext_hat_raw6[1], su_mob_alpha);
+    su_world_F_hat_ext_lpf[2] = lpf1(su_world_F_hat_ext_lpf[2], -wext_hat_raw6[2], su_mob_alpha);
 
-    su_body_Tau_hat_ext[0] = lpf1(su_body_Tau_hat_ext[0], -wext_hat_raw6[3], su_mob_alpha);
-    su_body_Tau_hat_ext[1] = lpf1(su_body_Tau_hat_ext[1], -wext_hat_raw6[4], su_mob_alpha);
-    su_body_Tau_hat_ext[2] = lpf1(su_body_Tau_hat_ext[2], -wext_hat_raw6[5], su_mob_alpha);
+    su_body_Tau_hat_ext_lpf[0] = lpf1(su_body_Tau_hat_ext_lpf[0], -wext_hat_raw6[3], su_mob_alpha);
+    su_body_Tau_hat_ext_lpf[1] = lpf1(su_body_Tau_hat_ext_lpf[1], -wext_hat_raw6[4], su_mob_alpha);
+    su_body_Tau_hat_ext_lpf[2] = lpf1(su_body_Tau_hat_ext_lpf[2], -wext_hat_raw6[5], su_mob_alpha);
+
+    for (int i = 0; i < 3; ++i) {
+        su_world_F_hat_ext[i] = su_world_F_hat_ext_lpf[i] - su_world_F_hat_bias[i];
+        su_body_Tau_hat_ext[i] = su_body_Tau_hat_ext_lpf[i] - su_body_Tau_hat_bias[i];
+    }
 }
 
 void suWrenchObserverGetWorldForce(float outF[3])
@@ -332,22 +391,37 @@ LOG_ADD(LOG_FLOAT, suWFx_scaled, &su_world_input_Force_scaled[0])
 LOG_ADD(LOG_FLOAT, suWFy_scaled, &su_world_input_Force_scaled[1])
 LOG_ADD(LOG_FLOAT, suWFz_scaled, &su_world_input_Force_scaled[2])
 
+LOG_ADD(LOG_FLOAT, f1, &su_motor_force[0])
+LOG_ADD(LOG_FLOAT, f2, &su_motor_force[1])
+LOG_ADD(LOG_FLOAT, f3, &su_motor_force[2])
+LOG_ADD(LOG_FLOAT, f4, &su_motor_force[3])
+
+LOG_ADD(LOG_FLOAT, f1_scaled, &su_motor_force_scaled[0])
+LOG_ADD(LOG_FLOAT, f2_scaled, &su_motor_force_scaled[1])
+LOG_ADD(LOG_FLOAT, f3_scaled, &su_motor_force_scaled[2])
+LOG_ADD(LOG_FLOAT, f4_scaled, &su_motor_force_scaled[3])
+
 LOG_ADD(LOG_FLOAT, suV,   &su_vbat_log)      // 필터링 된 전압
 
 // dt 로깅 & MOB 출력
 LOG_ADD(LOG_FLOAT, suDt,     &su_dt_mon)     // 모니터링용 필터된 dt
 LOG_ADD(LOG_FLOAT, suDtraw,  &su_dt_raw)     // 생 dt
 
-LOG_ADD(LOG_FLOAT, suFextX, &su_world_F_hat_ext[0])     // World 힘 추정 (LPF)
-LOG_ADD(LOG_FLOAT, suFextY, &su_world_F_hat_ext[1])
-LOG_ADD(LOG_FLOAT, suFextZ, &su_world_F_hat_ext[2])
+// LOG_ADD(LOG_FLOAT, suFextX, &su_world_F_hat_ext[0])     // World 힘 추정 (LPF)
+// LOG_ADD(LOG_FLOAT, suFextY, &su_world_F_hat_ext[1])
+// LOG_ADD(LOG_FLOAT, suFextZ, &su_world_F_hat_ext[2])
 
-LOG_ADD(LOG_FLOAT, suFextX_raw, &wext_hat_raw6[0])      // World 힘 추정 (raw)
-LOG_ADD(LOG_FLOAT, suFextY_raw, &wext_hat_raw6[1])
-LOG_ADD(LOG_FLOAT, suFextZ_raw, &wext_hat_raw6[2])
+// LOG_ADD(LOG_FLOAT, suFextX_raw, &wext_hat_raw6[0])      // World 힘 추정 (raw)
+// LOG_ADD(LOG_FLOAT, suFextY_raw, &wext_hat_raw6[1])
+// LOG_ADD(LOG_FLOAT, suFextZ_raw, &wext_hat_raw6[2])
 
-LOG_ADD(LOG_FLOAT, suTextX, &su_body_Tau_hat_ext[0])    // Body 토크 추정
-LOG_ADD(LOG_FLOAT, suTextY, &su_body_Tau_hat_ext[1])
-LOG_ADD(LOG_FLOAT, suTextZ, &su_body_Tau_hat_ext[2])
+// LOG_ADD(LOG_FLOAT, suTextX, &su_body_Tau_hat_ext[0])    // Body 토크 추정
+// LOG_ADD(LOG_FLOAT, suTextY, &su_body_Tau_hat_ext[1])
+// LOG_ADD(LOG_FLOAT, suTextZ, &su_body_Tau_hat_ext[2])
+LOG_ADD(LOG_UINT32, suZeroCnt, &su_zero_bias_count)
 
 LOG_GROUP_STOP(suWrenchObs)
+
+PARAM_GROUP_START(suWrenchObs)
+PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, zeroBias, &su_zero_bias_request, suWrenchObserverZeroBiasCallback)
+PARAM_GROUP_STOP(suWrenchObs)

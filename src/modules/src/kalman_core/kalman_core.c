@@ -167,8 +167,18 @@ static void quatFromYawRad(float yaw, float qYaw[4])
   quatNormalize(qYaw);
 }
 
+static void quatFromPitchRad(float pitch, float qPitch[4])
+{
+  const float half = 0.5f * pitch;
+  qPitch[0] = arm_cos_f32(half);
+  qPitch[1] = 0.0f;
+  qPitch[2] = arm_sin_f32(half);
+  qPitch[3] = 0.0f;
+  quatNormalize(qPitch);
+}
+
 // qOut = qYaw(kalman) ⊗ qTilt(comp),  where qTilt(comp) = conj(qYaw(comp)) ⊗ qComp
-static void buildMixedQuatYawKalmanTiltComp(const float qKal[4], const float qComp[4], float qOut[4])
+static void buildMixedQuatYawKalmanTiltComp(const float qKal[4], const float qComp[4], float compPitchBias, float qOut[4])
 {
   // 1) yaw-only quats
   float qYawKal[4], qYawComp[4];
@@ -183,6 +193,19 @@ static void buildMixedQuatYawKalmanTiltComp(const float qKal[4], const float qCo
   quatMul(qYawCompConj, qComp, qTiltComp);
   quatNormalize(qTiltComp);
   quatEnsurePositiveWLocal(qTiltComp);
+
+  // Optional output-only pitch bias on the complementary tilt path.
+  if (fabsf(compPitchBias) > 1e-9f) {
+    float qPitchBias[4];
+    float qTiltCompBiased[4];
+    quatFromPitchRad(compPitchBias, qPitchBias);
+    quatMul(qPitchBias, qTiltComp, qTiltCompBiased);
+    for (int i = 0; i < 4; i++) {
+      qTiltComp[i] = qTiltCompBiased[i];
+    }
+    quatNormalize(qTiltComp);
+    quatEnsurePositiveWLocal(qTiltComp);
+  }
 
   // 3) qOut = qYawKal ⊗ qTiltComp
   quatMul(qYawKal, qTiltComp, qOut);
@@ -413,6 +436,20 @@ void kalmanCoreSetCompKi(kalmanCoreData_t* this, float ki)
   this->compKi = ki;
 }
 
+void kalmanCoreSetCompPitchBias(kalmanCoreData_t* this, float bias_rad)
+{
+  if (!isfinite(bias_rad)) {
+    bias_rad = 0.0f;
+  }
+  if (bias_rad < -0.35f) {
+    bias_rad = -0.35f;
+  }
+  if (bias_rad > 0.35f) {
+    bias_rad = 0.35f;
+  }
+  this->compPitchBias = bias_rad;
+}
+
 
 
 void kalmanCoreGetComplementaryQuat(const kalmanCoreData_t* this, float q_out[4])
@@ -482,6 +519,7 @@ void kalmanCoreInit(kalmanCoreData_t *this, const kalmanCoreParams_t *params, co
 
   this->compKp = 2.0f;
   this->compKi        = 0.1f;  // ★ 시작점: 0.02~0.2 사이가 보통 안전
+  this->compPitchBias = 0.0f;
   this->compBiasLimit = 0.30f;  // bias saturation [rad/s]
   this->compGyroGate  = 1.50f;  // gyro norm gate [rad/s] (준정지에서만 적분)
 
@@ -1110,7 +1148,7 @@ void kalmanCoreExternalizeState(const kalmanCoreData_t* this, state_t *state, co
     qAtt = this->qComp;    // 1: comp full
   } else {
     // 2: mixed (tilt from comp, yaw from kalman) - quaternion level
-    buildMixedQuatYawKalmanTiltComp(this->q, this->qComp, qAttLocal);
+    buildMixedQuatYawKalmanTiltComp(this->q, this->qComp, this->compPitchBias, qAttLocal);
     qAtt = qAttLocal;
   }
 
