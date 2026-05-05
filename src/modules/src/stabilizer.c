@@ -371,6 +371,10 @@ static void stabilizerTask(void* param)
       } else {
         motorsStop();
 
+        motorThrustUncapped.motors.m1 = motorThrustUncapped.motors.m2 = 0;
+        motorThrustUncapped.motors.m3 = motorThrustUncapped.motors.m4 = 0;
+        motorThrustBatCompUncapped.motors.m1 = motorThrustBatCompUncapped.motors.m2 = 0;
+        motorThrustBatCompUncapped.motors.m3 = motorThrustBatCompUncapped.motors.m4 = 0;
         motorPwm.motors.m1 = motorPwm.motors.m2 = 0; // SEUK 모터 멈췄을때 로그에서도 0 뜨게 하기 위함임
         motorPwm.motors.m3 = motorPwm.motors.m4 = 0; // SEUK
       }
@@ -380,13 +384,10 @@ static void stabilizerTask(void* param)
       // Run the wrench observer at ~250 Hz (decimated from 1 kHz loop)
       // MOB
       if (RATE_DO_EXECUTE(RATE_250_HZ, stabilizerStep)) {
-        float vW[3] = {
-          state.velocity.x,
-          state.velocity.y,
-          state.velocity.z
-        };
-    
-        suWrenchObserverUpdate(&state, &motorPwm, &sensorData.gyro, vW);
+        float velFromPosWorld[3];
+        suVelFromPosGetWorld(velFromPosWorld);
+
+        suWrenchObserverUpdate(&state, &motorThrustUncapped, &motorPwm, &sensorData.gyro, velFromPosWorld);
       }      // Compute compressed log formats      
 
       // Compute compressed log formats
