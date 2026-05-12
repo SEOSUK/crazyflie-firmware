@@ -13,8 +13,6 @@
  *  - Kf, Ktau:        [1/s]
  *  - deadzone_F:      [N]
  *  - deadzone_T:      [N·m]
- *  - voltage_model_*: [-] (model coefficients)
- *  - *_alpha:         [0..1] IIR (LPF) gain
  */
 
 #ifdef __cplusplus
@@ -32,20 +30,18 @@ extern float Jzz;                 // [kg·m^2]
 // -------- Wrench observer / MOB --------
 extern float su_Kf;               // [1/s] linear momentum observer gain
 extern float su_Ktau;             // [1/s] angular momentum observer gain
+extern float su_Kp;               // [1/s] translational momentum correction gain
+extern float su_Kh;               // [1/s] rotational momentum correction gain
+extern float su_Keps;             // [1/s] consistency residual correction gain
 
 extern float su_deadzone_F;       // [N]   force deadzone
 extern float su_deadzone_T;       // [N·m] torque deadzone
 
-extern float su_voltage_model_a;  // [-] thrust-voltage model 'a'
-extern float su_voltage_model_b;  // [-] thrust-voltage model 'b'
-
-extern float su_vbat_alpha;       // [0..1] battery voltage LPF alpha
-extern float su_dt_alpha;         // [0..1] dt monitor LPF alpha
-extern float su_mob_alpha;        // [0..1] MOB output LPF alpha
-extern uint8_t su_zero_bias;      // [0/1] trigger MOB bias zeroing
-
-extern float su_dob_wn;      // [rad/s] Q-filter natural frequency (2π * fc)
-extern float su_dob_zeta;    // [-] Q-filter damping ratio (Butterworth ≈ 0.707f)
+extern uint8_t su_zero_bias;      // [0/1] trigger MOB output bias capture
+extern float su_r_offset_x;       // [m] body-frame contact offset x
+extern float su_r_offset_y;       // [m] body-frame contact offset y
+extern float su_r_offset_z;       // [m] body-frame contact offset z
+extern uint8_t su_consistency_mode; // 0=None, 1=Residual, 2=Both
 
 #ifdef __cplusplus
 } // extern "C"

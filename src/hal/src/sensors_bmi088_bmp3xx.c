@@ -126,6 +126,7 @@ static volatile uint64_t imuIntTimestamp;
 
 static Axis3i16 gyroRaw;
 static Axis3i16 accelRaw;
+static Axis3f accRawBody;
 NO_DMA_CCM_SAFE_ZERO_INIT static BiasObj gyroBiasRunning;
 static Axis3f gyroBias;
 #if defined(SENSORS_GYRO_BIAS_CALCULATE_STDDEV) && defined (GYRO_BIAS_LIGHT_WEIGHT)
@@ -159,6 +160,11 @@ static float cosPitch;
 static float sinPitch;
 static float cosRoll;
 static float sinRoll;
+static float accTrimRoll = 0.0f;
+static float accTrimPitch = 0.0f;
+static float accBiasX = 0.0f;
+static float accBiasY = 0.0f;
+static float accBiasZ = 0.0f;
 
 #ifdef GYRO_GYRO_BIAS_LIGHT_WEIGHT
 static bool processGyroBiasNoBuffer(int16_t gx, int16_t gy, int16_t gz, Axis3f *gyroBiasOut);
@@ -173,6 +179,7 @@ static void sensorsAddBiasValue(BiasObj* bias, int16_t x, int16_t y, int16_t z);
 static bool sensorsFindBiasValue(BiasObj* bias);
 static void sensorsAlignToAirframe(Axis3f* in, Axis3f* out);
 static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out);
+static void updateAccGravityTrimRotation(void);
 
 STATIC_MEM_TASK_ALLOC(sensorsTask, SENSORS_TASK_STACKSIZE);
 
@@ -339,6 +346,11 @@ static void sensorsTask(void *param)
       accScaledIMU.y = accelRaw.y * SENSORS_BMI088_G_PER_LSB_CFG / accScale;
       accScaledIMU.z = accelRaw.z * SENSORS_BMI088_G_PER_LSB_CFG / accScale;
       sensorsAlignToAirframe(&accScaledIMU, &accScaled);
+      accScaled.x -= accBiasX;
+      accScaled.y -= accBiasY;
+      accScaled.z -= accBiasZ;
+      accRawBody = accScaled;
+      updateAccGravityTrimRotation();
       sensorsAccAlignToGravity(&accScaled, &sensorData.acc);
       applyAxis3fLpf((lpf2pData*)(&accLpf), &sensorData.acc);
 
@@ -548,10 +560,7 @@ static void sensorsDeviceInit(void)
     lpf2pInit(&accLpf[i],  1000, ACCEL_LPF_CUTOFF_FREQ);
   }
 
-  cosPitch = cosf(configblockGetCalibPitch() * (float) M_PI / 180);
-  sinPitch = sinf(configblockGetCalibPitch() * (float) M_PI / 180);
-  cosRoll = cosf(configblockGetCalibRoll() * (float) M_PI / 180);
-  sinRoll = sinf(configblockGetCalibRoll() * (float) M_PI / 180);
+  updateAccGravityTrimRotation();
 
   isInit = true;
 }
@@ -949,6 +958,17 @@ static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out)
   out->z = ry.z;
 }
 
+static void updateAccGravityTrimRotation(void)
+{
+  const float totalPitchDeg = configblockGetCalibPitch() + accTrimPitch;
+  const float totalRollDeg = configblockGetCalibRoll() + accTrimRoll;
+
+  cosPitch = cosf(totalPitchDeg * (float) M_PI / 180.0f);
+  sinPitch = sinf(totalPitchDeg * (float) M_PI / 180.0f);
+  cosRoll = cosf(totalRollDeg * (float) M_PI / 180.0f);
+  sinRoll = sinf(totalRollDeg * (float) M_PI / 180.0f);
+}
+
 void sensorsBmi088Bmp3xxSetAccMode(accModes accMode)
 {
   switch (accMode)
@@ -1016,6 +1036,12 @@ LOG_ADD(LOG_FLOAT, zVariance, &gyroBiasRunning.variance.z)
 LOG_GROUP_STOP(gyro)
 #endif
 
+LOG_GROUP_START(accRaw)
+LOG_ADD(LOG_FLOAT, x, &accRawBody.x)
+LOG_ADD(LOG_FLOAT, y, &accRawBody.y)
+LOG_ADD(LOG_FLOAT, z, &accRawBody.z)
+LOG_GROUP_STOP(accRaw)
+
 PARAM_GROUP_START(imu_sensors)
 
 /**
@@ -1037,5 +1063,30 @@ PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, imuTheta, &imuTheta)
  * @brief Euler angle Psi defining IMU orientation on the airframe (in degrees)
  */
 PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, imuPsi, &imuPsi)
+
+/**
+ * @brief Extra roll trim applied before Mahony/complementary accelerometer use [deg]
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accTrimRoll, &accTrimRoll)
+
+/**
+ * @brief Extra pitch trim applied before Mahony/complementary accelerometer use [deg]
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accTrimPitch, &accTrimPitch)
+
+/**
+ * @brief Manual accelerometer X bias in body frame after airframe alignment [G]
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasX, &accBiasX)
+
+/**
+ * @brief Manual accelerometer Y bias in body frame after airframe alignment [G]
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasY, &accBiasY)
+
+/**
+ * @brief Manual accelerometer Z bias in body frame after airframe alignment [G]
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasZ, &accBiasZ)
 
 PARAM_GROUP_STOP(imu_sensors)
