@@ -65,7 +65,7 @@ static bool isInit;
 
 // wrench observer 속도
 #ifndef SU_WRENCH_RATE_HZ
-#define SU_WRENCH_RATE_HZ 250 
+#define SU_WRENCH_RATE_HZ 100
 #endif
 
 
@@ -381,13 +381,14 @@ static void stabilizerTask(void* param)
 
 
       // wrench observer랑 wrench observer dob랑 둘 중에 하나만 켜라 !!!!
-      // Run the wrench observer at ~250 Hz (decimated from 1 kHz loop)
+      // Run the wrench observer at ~100 Hz (decimated from 1 kHz loop)
       // MOB
-      if (RATE_DO_EXECUTE(RATE_250_HZ, stabilizerStep)) {
+      if (RATE_DO_EXECUTE(SU_WRENCH_RATE_HZ, stabilizerStep)) {
         float velFromPosWorld[3];
         suVelFromPosGetWorld(velFromPosWorld);
 
-        suWrenchObserverUpdate(&state, &motorThrustUncapped, &motorPwm, &sensorData.gyro, velFromPosWorld);
+        suWrenchObserverUpdate(&state, &motorThrustUncapped, &motorPwm, &sensorData.gyro,
+                               velFromPosWorld, 1.0f / (float)SU_WRENCH_RATE_HZ);
       }      // Compute compressed log formats      
 
       // Compute compressed log formats

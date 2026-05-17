@@ -12,7 +12,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SU_WRENCH_OBSERVER_DT (1.0f / 250.0f)
 #define SU_CONSISTENCY_NONE     0
 #define SU_CONSISTENCY_RESIDUAL 1
 #define SU_CONSISTENCY_BOTH     2
@@ -239,13 +238,12 @@ void suWrenchObserverUpdate(const state_t *state,
                             const motors_thrust_uncapped_t *motorThrustUncapped,
                             const motors_thrust_pwm_t *motorPwm,
                             const Axis3f *gyro_deg_s,
-                            const float vel_from_pos_world[3])
+                            const float vel_from_pos_world[3],
+                            float dt)
 {
   if (!state || !motorThrustUncapped || !motorPwm) {
     return;
   }
-
-  const float dt = SU_WRENCH_OBSERVER_DT;
   const float thrust_to_n = THRUST_MAX / (float)UINT16_MAX;
   const float gravity_world[3] = {0.0f, 0.0f, -su_mass * 9.81f};
 
