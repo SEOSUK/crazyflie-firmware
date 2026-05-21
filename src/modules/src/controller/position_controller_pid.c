@@ -57,6 +57,11 @@ struct this_s {
   uint16_t thrustMin;  // Minimum thrust value to output
 };
 
+typedef enum {
+  velocityFrameYawAligned = 0,
+  velocityFrameWorld = 1,
+} velocityFrameMode_t;
+
 // Maximum roll/pitch angle permited
 static float rLimit = PID_VEL_ROLL_MAX;
 static float pLimit = PID_VEL_PITCH_MAX;
@@ -68,6 +73,7 @@ static float zVelMax = PID_POS_VEL_Z_MAX;
 static float velMaxOverhead = 1.10f;
 
 static const float thrustScale = 1000.0f;
+static uint8_t velocityFrameMode = velocityFrameYawAligned;
 
 #define DT (float)(1.0f/POSITION_RATE)
 static bool posFiltEnable = PID_POS_XY_FILT_ENABLE;
@@ -82,6 +88,15 @@ static float velZFiltCutoff = PID_VEL_Z_FILT_CUTOFF_BARO_Z_HOLD;
 #else
 static float velZFiltCutoff = PID_VEL_Z_FILT_CUTOFF;
 #endif
+static bool filtersConfigured = false;
+static bool lastPosFiltEnable;
+static bool lastVelFiltEnable;
+static bool lastPosZFiltEnable;
+static bool lastVelZFiltEnable;
+static float lastPosFiltCutoff;
+static float lastVelFiltCutoff;
+static float lastPosZFiltCutoff;
+static float lastVelZFiltCutoff;
 
 #ifndef UNIT_TEST
 static struct this_s this = {
@@ -163,6 +178,56 @@ static struct this_s this = {
 };
 #endif
 
+static void refreshPositionControllerFiltersIfNeeded(void)
+{
+  const bool posXYChanged =
+    (!filtersConfigured) ||
+    (posFiltEnable != lastPosFiltEnable) ||
+    (posFiltCutoff != lastPosFiltCutoff);
+  const bool posZChanged =
+    (!filtersConfigured) ||
+    (posZFiltEnable != lastPosZFiltEnable) ||
+    (posZFiltCutoff != lastPosZFiltCutoff);
+  const bool velXYChanged =
+    (!filtersConfigured) ||
+    (velFiltEnable != lastVelFiltEnable) ||
+    (velFiltCutoff != lastVelFiltCutoff);
+  const bool velZChanged =
+    (!filtersConfigured) ||
+    (velZFiltEnable != lastVelZFiltEnable) ||
+    (velZFiltCutoff != lastVelZFiltCutoff);
+
+  if (posXYChanged) {
+    filterReset(&this.pidX.pid, POSITION_RATE, posFiltCutoff, posFiltEnable);
+    filterReset(&this.pidY.pid, POSITION_RATE, posFiltCutoff, posFiltEnable);
+  }
+
+  if (posZChanged) {
+    filterReset(&this.pidZ.pid, POSITION_RATE, posZFiltCutoff, posZFiltEnable);
+  }
+
+  if (velXYChanged) {
+    filterReset(&this.pidVX.pid, POSITION_RATE, velFiltCutoff, velFiltEnable);
+    filterReset(&this.pidVY.pid, POSITION_RATE, velFiltCutoff, velFiltEnable);
+  }
+
+  if (velZChanged) {
+    filterReset(&this.pidVZ.pid, POSITION_RATE, velZFiltCutoff, velZFiltEnable);
+  }
+
+  if (posXYChanged || posZChanged || velXYChanged || velZChanged) {
+    filtersConfigured = true;
+    lastPosFiltEnable = posFiltEnable;
+    lastVelFiltEnable = velFiltEnable;
+    lastPosZFiltEnable = posZFiltEnable;
+    lastVelZFiltEnable = velZFiltEnable;
+    lastPosFiltCutoff = posFiltCutoff;
+    lastVelFiltCutoff = velFiltCutoff;
+    lastPosZFiltCutoff = posZFiltCutoff;
+    lastVelZFiltCutoff = velZFiltCutoff;
+  }
+}
+
 void positionControllerInit()
 {
   pidInit(&this.pidX.pid, this.pidX.setpoint, this.pidX.pid.kp, this.pidX.pid.ki, this.pidX.pid.kd,
@@ -189,10 +254,13 @@ static float runPid(float input, struct pidAxis_s *axis, float setpoint, float d
 
 
 float state_body_x, state_body_y, state_body_vx, state_body_vy;
+float state_world_vx, state_world_vy;
 
 void positionController(float* thrust, attitude_t *attitude, const setpoint_t *setpoint,
                                                              const state_t *state)
 {
+  refreshPositionControllerFiltersIfNeeded();
+
   this.pidX.pid.outputLimit = xVelMax * velMaxOverhead;
   this.pidY.pid.outputLimit = yVelMax * velMaxOverhead;
   // The ROS landing detector will prematurely trip if
@@ -201,12 +269,6 @@ void positionController(float* thrust, attitude_t *attitude, const setpoint_t *s
 
   float cosyaw = cosf(state->attitude.yaw * (float)M_PI / 180.0f);
   float sinyaw = sinf(state->attitude.yaw * (float)M_PI / 180.0f);
-
-  float setp_body_x = setpoint->position.x * cosyaw + setpoint->position.y * sinyaw;
-  float setp_body_y = -setpoint->position.x * sinyaw + setpoint->position.y * cosyaw;
-
-  state_body_x = state->position.x * cosyaw + state->position.y * sinyaw;
-  state_body_y = -state->position.x * sinyaw + state->position.y * cosyaw;
 
   float globalvx = setpoint->velocity.x;
   float globalvy = setpoint->velocity.y;
@@ -217,17 +279,34 @@ void positionController(float* thrust, attitude_t *attitude, const setpoint_t *s
   setpoint_velocity.y = setpoint->velocity.y;
   setpoint_velocity.z = setpoint->velocity.z;
   if (setpoint->mode.x == modeAbs) {
-    setpoint_velocity.x = runPid(state_body_x, &this.pidX, setp_body_x, DT);
-  } else if (!setpoint->velocity_body) {
+    if (velocityFrameMode == velocityFrameWorld) {
+      setpoint_velocity.x = runPid(state->position.x, &this.pidX, setpoint->position.x, DT);
+    } else {
+      float setp_body_x = setpoint->position.x * cosyaw + setpoint->position.y * sinyaw;
+      state_body_x = state->position.x * cosyaw + state->position.y * sinyaw;
+      setpoint_velocity.x = runPid(state_body_x, &this.pidX, setp_body_x, DT);
+    }
+  } else if (!setpoint->velocity_body && velocityFrameMode != velocityFrameWorld) {
     setpoint_velocity.x = globalvx * cosyaw + globalvy * sinyaw;
   }
   if (setpoint->mode.y == modeAbs) {
-    setpoint_velocity.y = runPid(state_body_y, &this.pidY, setp_body_y, DT);
-  } else if (!setpoint->velocity_body) {
+    if (velocityFrameMode == velocityFrameWorld) {
+      setpoint_velocity.y = runPid(state->position.y, &this.pidY, setpoint->position.y, DT);
+    } else {
+      float setp_body_y = -setpoint->position.x * sinyaw + setpoint->position.y * cosyaw;
+      state_body_y = -state->position.x * sinyaw + state->position.y * cosyaw;
+      setpoint_velocity.y = runPid(state_body_y, &this.pidY, setp_body_y, DT);
+    }
+  } else if (!setpoint->velocity_body && velocityFrameMode != velocityFrameWorld) {
     setpoint_velocity.y = globalvy * cosyaw - globalvx * sinyaw;
   }
   if (setpoint->mode.z == modeAbs) {
     setpoint_velocity.z = runPid(state->position.z, &this.pidZ, setpoint->position.z, DT);
+  }
+
+  if (velocityFrameMode == velocityFrameWorld) {
+    state_body_x = state->position.x * cosyaw + state->position.y * sinyaw;
+    state_body_y = -state->position.x * sinyaw + state->position.y * cosyaw;
   }
 
   velocityController(thrust, attitude, &setpoint_velocity, state);
@@ -236,6 +315,8 @@ void positionController(float* thrust, attitude_t *attitude, const setpoint_t *s
 void velocityController(float* thrust, attitude_t *attitude, const Axis3f* setpoint_velocity,
                                                              const state_t *state)
 {
+  refreshPositionControllerFiltersIfNeeded();
+
   this.pidVX.pid.outputLimit = pLimit * rpLimitOverhead;
   this.pidVY.pid.outputLimit = rLimit * rpLimitOverhead;
   // Set the output limit to the maximum thrust range
@@ -244,12 +325,37 @@ void velocityController(float* thrust, attitude_t *attitude, const Axis3f* setpo
 
   float cosyaw = cosf(state->attitude.yaw * (float)M_PI / 180.0f);
   float sinyaw = sinf(state->attitude.yaw * (float)M_PI / 180.0f);
-  state_body_vx = state->velocity.x * cosyaw + state->velocity.y * sinyaw;
-  state_body_vy = -state->velocity.x * sinyaw + state->velocity.y * cosyaw;
+  float pitchCmd;
+  float rollCmd;
+
+  if (velocityFrameMode == velocityFrameWorld) {
+    state_world_vx = state->velocity.x;
+    state_world_vy = state->velocity.y;
+
+    const float worldCmdX = runPid(state_world_vx, &this.pidVX, setpoint_velocity->x, DT);
+    const float worldCmdY = runPid(state_world_vy, &this.pidVY, setpoint_velocity->y, DT);
+
+    const float bodyCmdX = worldCmdX * cosyaw + worldCmdY * sinyaw;
+    const float bodyCmdY = -worldCmdX * sinyaw + worldCmdY * cosyaw;
+
+    pitchCmd = -bodyCmdX;
+    rollCmd = -bodyCmdY;
+
+    state_body_vx = state->velocity.x * cosyaw + state->velocity.y * sinyaw;
+    state_body_vy = -state->velocity.x * sinyaw + state->velocity.y * cosyaw;
+  } else {
+    state_body_vx = state->velocity.x * cosyaw + state->velocity.y * sinyaw;
+    state_body_vy = -state->velocity.x * sinyaw + state->velocity.y * cosyaw;
+
+    pitchCmd = -runPid(state_body_vx, &this.pidVX, setpoint_velocity->x, DT);
+    rollCmd = -runPid(state_body_vy, &this.pidVY, setpoint_velocity->y, DT);
+    state_world_vx = state->velocity.x;
+    state_world_vy = state->velocity.y;
+  }
 
   // Roll and Pitch
-  attitude->pitch = -runPid(state_body_vx, &this.pidVX, setpoint_velocity->x, DT);
-  attitude->roll = -runPid(state_body_vy, &this.pidVY, setpoint_velocity->y, DT);
+  attitude->pitch = pitchCmd;
+  attitude->roll = rollCmd;
 
   attitude->roll  = constrain(attitude->roll,  -rLimit, rLimit);
   attitude->pitch = constrain(attitude->pitch, -pLimit, pLimit);
@@ -510,6 +616,26 @@ PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, vzKd, &this.pidVZ.pid.kd)
  * @brief Feedforward gain for the velocity PID in the global direction (in degrees per m/s)
  */
 PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, vzKFF, &this.pidVZ.pid.kff)
+/**
+ * @brief Enable D-term low-pass filter for X/Y velocity PID (default: 1)
+ */
+PARAM_ADD(PARAM_INT8 | PARAM_PERSISTENT, velFiltEn, &velFiltEnable)
+/**
+ * @brief Cutoff frequency in Hz for X/Y velocity PID D-term LPF (default: 20.0)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, velFiltCut, &velFiltCutoff)
+/**
+ * @brief Enable D-term low-pass filter for Z velocity PID (default: 1)
+ */
+PARAM_ADD(PARAM_INT8 | PARAM_PERSISTENT, velZFiltEn, &velZFiltEnable)
+/**
+ * @brief Cutoff frequency in Hz for Z velocity PID D-term LPF (default: 20.0, or 0.7 with improved baro Z hold)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, velZFiltCut, &velZFiltCutoff)
+/**
+ * @brief Velocity/position frame mode: 0=yaw-aligned body frame, 1=world frame
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_PERSISTENT, frameMode, &velocityFrameMode)
 
 PARAM_GROUP_STOP(velCtlPid)
 
@@ -569,6 +695,22 @@ PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, zKd, &this.pidZ.pid.kd)
  * @brief Feedforward gain for the position PID in the body-yaw-aligned Z direction
  */
 PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, zKff, &this.pidZ.pid.kff)
+/**
+ * @brief Enable D-term low-pass filter for X/Y position PID (default: 1)
+ */
+PARAM_ADD(PARAM_INT8 | PARAM_PERSISTENT, posFiltEn, &posFiltEnable)
+/**
+ * @brief Cutoff frequency in Hz for X/Y position PID D-term LPF (default: 20.0)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, posFiltCut, &posFiltCutoff)
+/**
+ * @brief Enable D-term low-pass filter for Z position PID (default: 1)
+ */
+PARAM_ADD(PARAM_INT8 | PARAM_PERSISTENT, posZFiltEn, &posZFiltEnable)
+/**
+ * @brief Cutoff frequency in Hz for Z position PID D-term LPF (default: 20.0)
+ */
+PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, posZFiltCut, &posZFiltCutoff)
 
 /**
  * @brief Approx. thrust needed for hover

@@ -42,6 +42,13 @@ static float omxFiltCutoff = ATTITUDE_ROLL_RATE_LPF_CUTOFF_FREQ;
 static float omyFiltCutoff = ATTITUDE_PITCH_RATE_LPF_CUTOFF_FREQ;
 static float omzFiltCutoff = ATTITUDE_YAW_RATE_LPF_CUTOFF_FREQ;
 static float yawMaxDelta = YAW_MAX_DELTA;
+static bool filtersConfigured = false;
+static bool lastAttFiltEnable;
+static bool lastRateFiltEnable;
+static float lastAttFiltCutoff;
+static float lastOmxFiltCutoff;
+static float lastOmyFiltCutoff;
+static float lastOmzFiltCutoff;
 
 static inline int16_t saturateSignedInt16(float in)
 {
@@ -102,6 +109,47 @@ static int16_t yawOutput;
 
 static bool isInit;
 
+static void refreshAttitudeFiltersIfNeeded(void)
+{
+  if (!isInit) {
+    return;
+  }
+
+  const bool attitudeChanged =
+    (!filtersConfigured) ||
+    (attFiltEnable != lastAttFiltEnable) ||
+    (attFiltCutoff != lastAttFiltCutoff);
+
+  const bool rateChanged =
+    (!filtersConfigured) ||
+    (rateFiltEnable != lastRateFiltEnable) ||
+    (omxFiltCutoff != lastOmxFiltCutoff) ||
+    (omyFiltCutoff != lastOmyFiltCutoff) ||
+    (omzFiltCutoff != lastOmzFiltCutoff);
+
+  if (attitudeChanged) {
+    filterReset(&pidRoll, ATTITUDE_RATE, attFiltCutoff, attFiltEnable);
+    filterReset(&pidPitch, ATTITUDE_RATE, attFiltCutoff, attFiltEnable);
+    filterReset(&pidYaw, ATTITUDE_RATE, attFiltCutoff, attFiltEnable);
+  }
+
+  if (rateChanged) {
+    filterReset(&pidRollRate, ATTITUDE_RATE, omxFiltCutoff, rateFiltEnable);
+    filterReset(&pidPitchRate, ATTITUDE_RATE, omyFiltCutoff, rateFiltEnable);
+    filterReset(&pidYawRate, ATTITUDE_RATE, omzFiltCutoff, rateFiltEnable);
+  }
+
+  if (attitudeChanged || rateChanged) {
+    filtersConfigured = true;
+    lastAttFiltEnable = attFiltEnable;
+    lastRateFiltEnable = rateFiltEnable;
+    lastAttFiltCutoff = attFiltCutoff;
+    lastOmxFiltCutoff = omxFiltCutoff;
+    lastOmyFiltCutoff = omyFiltCutoff;
+    lastOmzFiltCutoff = omzFiltCutoff;
+  }
+}
+
 void attitudeControllerInit(const float updateDt)
 {
   if(isInit)
@@ -142,6 +190,8 @@ void attitudeControllerCorrectRatePID(
        float rollRateActual, float pitchRateActual, float yawRateActual,
        float rollRateDesired, float pitchRateDesired, float yawRateDesired)
 {
+  refreshAttitudeFiltersIfNeeded();
+
   pidSetDesired(&pidRollRate, rollRateDesired);
   rollOutput = saturateSignedInt16(pidUpdate(&pidRollRate, rollRateActual, false));
 
@@ -158,6 +208,8 @@ void attitudeControllerCorrectAttitudePID(
        float eulerRollDesired, float eulerPitchDesired, float eulerYawDesired,
        float* rollRateDesired, float* pitchRateDesired, float* yawRateDesired)
 {
+  refreshAttitudeFiltersIfNeeded();
+
   pidSetDesired(&pidRoll, eulerRollDesired);
   *rollRateDesired = pidUpdate(&pidRoll, eulerRollActual, false);
 
