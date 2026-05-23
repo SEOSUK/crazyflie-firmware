@@ -353,10 +353,9 @@ static void complementaryUpdate(kalmanCoreData_t* this, const Axis3f* acc, const
   // 2) measured gravity (body)
   // -----------------------------
   const float inv_an = 1.0f / an;
-  // The firmware accelerometer convention is already aligned with the
-  // body-frame gravity direction at rest (acc.z ~= +1g when level), so use
-  // the normalized accelerometer vector directly here.
-  float g_meas[3] = { ax * inv_an, ay * inv_an, az * inv_an };
+  // Treat accelerometer as measuring specific force, so gravity direction is
+  // opposite the measured acceleration at rest.
+  float g_meas[3] = { -ax * inv_an, -ay * inv_an, -az * inv_an };
 
   // predicted gravity from current qComp
   float g_est[3];
