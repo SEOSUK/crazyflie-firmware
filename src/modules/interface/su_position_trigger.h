@@ -12,6 +12,11 @@ typedef enum {
 } su_position_mode_t;
 
 typedef enum {
+  SU_COMMAND_REFERENCE_DRONE = 0,
+  SU_COMMAND_REFERENCE_END_EFFECTOR = 1,
+} su_command_reference_t;
+
+typedef enum {
   SU_TRAJECTORY_NONE = 0,
   SU_TRAJECTORY_1 = 1,
   SU_TRAJECTORY_2 = 2,
@@ -22,6 +27,7 @@ void suPositionTriggerUpdate(void);
 
 uint8_t suPositionTriggerGetMode(void);
 uint8_t suPositionTriggerGetTrajectoryMode(void);
+uint8_t suPositionTriggerGetCommandReference(void);
 
 #ifdef __cplusplus
 }

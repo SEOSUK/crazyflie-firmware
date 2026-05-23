@@ -1,17 +1,24 @@
 #include "su_position_reference.h"
 
+#include <math.h>
 #include <stdbool.h>
 
+#include "su_params.h"
 #include "su_position_trigger.h"
 #include "su_trajectory_generator.h"
+#include "su_wrench_observer.h"
 
 #define SU_POSITION_VELOCITY_RATE_HZ 100
+#define SU_RAD2DEG (180.0f / (float)M_PI)
 
 static bool referenceInitialized = false;
 static point_t referencePosition;
 static float referenceYawDeg = 0.0f;
 static uint8_t lastPositionMode = SU_POSITION_MODE_POSITION;
 static uint8_t lastTrajectoryMode = SU_TRAJECTORY_NONE;
+static uint8_t lastCommandReference = SU_COMMAND_REFERENCE_END_EFFECTOR;
+static float filteredForceWorldXY[2] = {0.0f, 0.0f};
+static bool filteredForceInitialized = false;
 
 static bool isPositionSetpointCandidate(const setpoint_t *setpoint)
 {
@@ -28,7 +35,42 @@ static bool isPositionSetpointCandidate(const setpoint_t *setpoint)
          setpoint->mode.quat == modeDisable;
 }
 
-static void initializeReference(const setpoint_t *setpoint, const state_t *state)
+static void rotateBodyOffsetToWorld(const float yawDeg, point_t *offsetWorld)
+{
+  if (!offsetWorld) {
+    return;
+  }
+
+  const float yawRad = yawDeg * ((float)M_PI / 180.0f);
+  const float cosYaw = cosf(yawRad);
+  const float sinYaw = sinf(yawRad);
+
+  offsetWorld->x = cosYaw * su_r_offset_x - sinYaw * su_r_offset_y;
+  offsetWorld->y = sinYaw * su_r_offset_x + cosYaw * su_r_offset_y;
+  offsetWorld->z = su_r_offset_z;
+}
+
+static void convertReferencePosition(point_t *position, const uint8_t fromReference, const uint8_t toReference, const float yawDeg)
+{
+  if (!position || fromReference == toReference) {
+    return;
+  }
+
+  point_t offsetWorld;
+  rotateBodyOffsetToWorld(yawDeg, &offsetWorld);
+
+  if (fromReference == SU_COMMAND_REFERENCE_DRONE && toReference == SU_COMMAND_REFERENCE_END_EFFECTOR) {
+    position->x += offsetWorld.x;
+    position->y += offsetWorld.y;
+    position->z += offsetWorld.z;
+  } else if (fromReference == SU_COMMAND_REFERENCE_END_EFFECTOR && toReference == SU_COMMAND_REFERENCE_DRONE) {
+    position->x -= offsetWorld.x;
+    position->y -= offsetWorld.y;
+    position->z -= offsetWorld.z;
+  }
+}
+
+static void initializeReference(const setpoint_t *setpoint, const state_t *state, const uint8_t commandReference)
 {
   if (setpoint && isPositionSetpointCandidate(setpoint)) {
     referencePosition = setpoint->position;
@@ -43,18 +85,68 @@ static void initializeReference(const setpoint_t *setpoint, const state_t *state
     referenceYawDeg = 0.0f;
   }
 
+  convertReferencePosition(&referencePosition, SU_COMMAND_REFERENCE_DRONE, commandReference, referenceYawDeg);
   referenceInitialized = true;
 }
 
-static void writeReferenceToSetpoint(setpoint_t *setpoint)
+static void writeReferenceToSetpoint(setpoint_t *setpoint, const uint8_t commandReference)
 {
+  point_t droneReference = referencePosition;
+
+  convertReferencePosition(&droneReference, commandReference, SU_COMMAND_REFERENCE_DRONE, referenceYawDeg);
+
   setpoint->mode.x = modeAbs;
   setpoint->mode.y = modeAbs;
   setpoint->mode.z = modeAbs;
   setpoint->mode.yaw = modeAbs;
 
-  setpoint->position = referencePosition;
+  setpoint->position = droneReference;
   setpoint->attitude.yaw = referenceYawDeg;
+}
+
+static float clampPositive(const float value)
+{
+  return (value > 0.0f) ? value : 0.0f;
+}
+
+static void resetFilteredForce(void)
+{
+  filteredForceWorldXY[0] = 0.0f;
+  filteredForceWorldXY[1] = 0.0f;
+  filteredForceInitialized = false;
+}
+
+static void updateYawFromMobForce(void)
+{
+  if (clampPositive(su_yaw_force_lpf_hz) <= 0.0f) {
+    return;
+  }
+
+  float worldForce[3] = {0.0f, 0.0f, 0.0f};
+  suWrenchObserverGetWorldForce(worldForce);
+
+  const float rawFx = worldForce[0];
+  const float rawFy = worldForce[1];
+
+  if (!filteredForceInitialized) {
+    filteredForceWorldXY[0] = rawFx;
+    filteredForceWorldXY[1] = rawFy;
+    filteredForceInitialized = true;
+  } else {
+    const float dt = 1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ;
+    const float cutoffHz = clampPositive(su_yaw_force_lpf_hz);
+    const float tau = 1.0f / (2.0f * (float)M_PI * cutoffHz);
+    const float alpha = dt / (tau + dt);
+
+    filteredForceWorldXY[0] += alpha * (rawFx - filteredForceWorldXY[0]);
+    filteredForceWorldXY[1] += alpha * (rawFy - filteredForceWorldXY[1]);
+  }
+
+  const float forceNormXY = sqrtf(filteredForceWorldXY[0] * filteredForceWorldXY[0] +
+                                  filteredForceWorldXY[1] * filteredForceWorldXY[1]);
+  if (forceNormXY > clampPositive(su_epsilon_f)) {
+    referenceYawDeg = atan2f(-filteredForceWorldXY[1], -filteredForceWorldXY[0]) * SU_RAD2DEG;
+  }
 }
 
 void suPositionReferenceInit(void)
@@ -66,6 +158,8 @@ void suPositionReferenceInit(void)
   referenceYawDeg = 0.0f;
   lastPositionMode = SU_POSITION_MODE_POSITION;
   lastTrajectoryMode = SU_TRAJECTORY_NONE;
+  lastCommandReference = SU_COMMAND_REFERENCE_END_EFFECTOR;
+  resetFilteredForce();
 
   suPositionTriggerInit();
   suTrajectoryGeneratorInit();
@@ -80,26 +174,32 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
   }
 
   if (!referenceInitialized) {
-    initializeReference(setpoint, state);
+    initializeReference(setpoint, state, suPositionTriggerGetCommandReference());
   }
 
   const uint8_t positionMode = suPositionTriggerGetMode();
   const uint8_t trajectoryMode = suPositionTriggerGetTrajectoryMode();
+  const uint8_t commandReference = suPositionTriggerGetCommandReference();
+
+  if (commandReference != lastCommandReference) {
+    convertReferencePosition(&referencePosition, lastCommandReference, commandReference, referenceYawDeg);
+  }
 
   if (positionMode == SU_POSITION_MODE_POSITION) {
     if (lastPositionMode == SU_POSITION_MODE_VELOCITY) {
-      setpoint->position = referencePosition;
+      point_t commandFramePosition = referencePosition;
+      setpoint->position = commandFramePosition;
       setpoint->attitude.yaw = referenceYawDeg;
     }
 
     referencePosition = setpoint->position;
     referenceYawDeg = setpoint->attitude.yaw;
     suTrajectoryGeneratorDeactivate();
-    writeReferenceToSetpoint(setpoint);
+    resetFilteredForce();
+    writeReferenceToSetpoint(setpoint, commandReference);
   } else {
     if (lastPositionMode == SU_POSITION_MODE_POSITION) {
-      referencePosition = setpoint->position;
-      referenceYawDeg = setpoint->attitude.yaw;
+      resetFilteredForce();
       if (trajectoryMode != SU_TRAJECTORY_NONE) {
         suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, referenceYawDeg);
       } else {
@@ -121,18 +221,22 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
         referencePosition.x += setpoint->position.x * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
         referencePosition.y += setpoint->position.y * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
         referencePosition.z += setpoint->position.z * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+        updateYawFromMobForce();
       }
-      referenceYawDeg = setpoint->attitude.yaw;
     } else {
       if (!suTrajectoryGeneratorIsActive()) {
         suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, referenceYawDeg);
       }
       suTrajectoryGeneratorUpdate(trajectoryMode, stabilizerStep, &referencePosition, &referenceYawDeg);
+      if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+        updateYawFromMobForce();
+      }
     }
 
-    writeReferenceToSetpoint(setpoint);
+    writeReferenceToSetpoint(setpoint, commandReference);
   }
 
   lastPositionMode = positionMode;
   lastTrajectoryMode = trajectoryMode;
+  lastCommandReference = commandReference;
 }

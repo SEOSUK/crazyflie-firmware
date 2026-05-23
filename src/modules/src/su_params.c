@@ -36,6 +36,8 @@ uint8_t su_traj2_shape    = 2;           // 0=None, 1=Circle, 2=Square
 float su_traj2_size_x     = 0.40f;       // [m]
 float su_traj2_size_y     = 0.40f;       // [m]
 float su_traj2_period_s   = 8.0f;        // [s]
+float su_epsilon_f        = 0.005f;      // [N] force threshold for yaw alignment
+float su_yaw_force_lpf_hz = 2.0f;        // [Hz] LPF cutoff for force-direction yaw alignment
 
 static void suZeroBiasCallback(void)
 {
@@ -91,4 +93,6 @@ PARAM_ADD(PARAM_UINT8, traj2Shape,      &su_traj2_shape)
 PARAM_ADD(PARAM_FLOAT, traj2SizeX,      &su_traj2_size_x)
 PARAM_ADD(PARAM_FLOAT, traj2SizeY,      &su_traj2_size_y)
 PARAM_ADD(PARAM_FLOAT, traj2Period,     &su_traj2_period_s)
+PARAM_ADD(PARAM_FLOAT, epsilonF,        &su_epsilon_f)
+PARAM_ADD(PARAM_FLOAT, yawForceLpfHz,   &su_yaw_force_lpf_hz)
 PARAM_GROUP_STOP(su_position)
