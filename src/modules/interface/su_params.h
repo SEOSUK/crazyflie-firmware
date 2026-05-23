@@ -46,6 +46,16 @@ extern float su_r_offset_y;       // [m] body-frame contact offset y
 extern float su_r_offset_z;       // [m] body-frame contact offset z
 extern uint8_t su_consistency_mode; // 0=None, 1=Residual, 2=Both
 
+// -------- Position reference / trajectory --------
+extern uint8_t su_traj1_shape;    // 0=None, 1=Circle, 2=Square
+extern float su_traj1_size_x;     // [m] radius for circle, side length for square
+extern float su_traj1_size_y;     // [m] radius for circle, side length for square
+extern float su_traj1_period_s;   // [s]
+extern uint8_t su_traj2_shape;    // 0=None, 1=Circle, 2=Square
+extern float su_traj2_size_x;     // [m] radius for circle, side length for square
+extern float su_traj2_size_y;     // [m] radius for circle, side length for square
+extern float su_traj2_period_s;   // [s]
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

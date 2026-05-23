@@ -58,6 +58,7 @@
 #include "rateSupervisor.h"
 
 #include "su_wrench_observer.h" // SEUK
+#include "su_position_reference.h"
 #include "su_vel_from_pos.h"
 
 static bool isInit;
@@ -199,6 +200,7 @@ void stabilizerInit(StateEstimatorType estimator)
   STATIC_MEM_TASK_CREATE(stabilizerTask, stabilizerTask, STABILIZER_TASK_NAME, NULL, STABILIZER_TASK_PRI);
 
   suVelFromPosInit();  
+  suPositionReferenceInit();
   suWrenchObserverInit(); // SEUK MOB
 
   isInit = true;
@@ -350,6 +352,7 @@ static void stabilizerTask(void* param)
         commanderSetSetpoint(&tempSetpoint, COMMANDER_PRIORITY_HIGHLEVEL);
       }
       commanderGetSetpoint(&setpoint, &state);
+      suPositionReferenceUpdateSetpoint(&setpoint, &state, stabilizerStep);
 
       // Critical for safety, be careful if you modify this code!
       // Let the supervisor update it's view of the current situation

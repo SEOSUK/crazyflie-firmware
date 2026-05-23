@@ -28,6 +28,14 @@ float su_r_offset_x      = 0.1f;         // [m] body-frame point-contact offset 
 float su_r_offset_y      = 0.0f;         // [m] body-frame point-contact offset y
 float su_r_offset_z      = 0.04f;        // [m] body-frame point-contact offset z
 uint8_t su_consistency_mode = 2;         // 0=None, 1=Residual, 2=Both
+uint8_t su_traj1_shape    = 1;           // 0=None, 1=Circle, 2=Square
+float su_traj1_size_x     = 0.30f;       // [m]
+float su_traj1_size_y     = 0.30f;       // [m]
+float su_traj1_period_s   = 6.0f;        // [s]
+uint8_t su_traj2_shape    = 2;           // 0=None, 1=Circle, 2=Square
+float su_traj2_size_x     = 0.40f;       // [m]
+float su_traj2_size_y     = 0.40f;       // [m]
+float su_traj2_period_s   = 8.0f;        // [s]
 
 static void suZeroBiasCallback(void)
 {
@@ -72,5 +80,15 @@ PARAM_ADD(PARAM_FLOAT, rOffX,           &su_r_offset_x)
 PARAM_ADD(PARAM_FLOAT, rOffY,           &su_r_offset_y)
 PARAM_ADD(PARAM_FLOAT, rOffZ,           &su_r_offset_z)
 PARAM_ADD(PARAM_UINT8, consistencyMode, &su_consistency_mode)
-
 PARAM_GROUP_STOP(su_wrench)
+
+PARAM_GROUP_START(su_position)
+PARAM_ADD(PARAM_UINT8, traj1Shape,      &su_traj1_shape)
+PARAM_ADD(PARAM_FLOAT, traj1SizeX,      &su_traj1_size_x)
+PARAM_ADD(PARAM_FLOAT, traj1SizeY,      &su_traj1_size_y)
+PARAM_ADD(PARAM_FLOAT, traj1Period,     &su_traj1_period_s)
+PARAM_ADD(PARAM_UINT8, traj2Shape,      &su_traj2_shape)
+PARAM_ADD(PARAM_FLOAT, traj2SizeX,      &su_traj2_size_x)
+PARAM_ADD(PARAM_FLOAT, traj2SizeY,      &su_traj2_size_y)
+PARAM_ADD(PARAM_FLOAT, traj2Period,     &su_traj2_period_s)
+PARAM_GROUP_STOP(su_position)
