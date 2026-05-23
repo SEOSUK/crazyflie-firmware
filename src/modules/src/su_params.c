@@ -21,6 +21,9 @@ float su_Keps            = 0.3f;         // [1/s] consistency residual 보정 �
 float su_deadzone_F      = 0.000f;       // [N]   힘 deadzone
 float su_deadzone_T      = 0.0000f;      // [N·m] 토크 deadzone
 uint8_t su_zero_bias     = 0;            // MOB output bias capture trigger
+float su_com_offset_x    = 0.0f;         // [m] body-frame CoM offset x
+float su_com_offset_y    = 0.0f;         // [m] body-frame CoM offset y
+float su_com_offset_z    = 0.0f;         // [m] body-frame CoM offset z
 float su_r_offset_x      = 0.1f;         // [m] body-frame point-contact offset x
 float su_r_offset_y      = 0.0f;         // [m] body-frame point-contact offset y
 float su_r_offset_z      = 0.04f;        // [m] body-frame point-contact offset z
@@ -47,6 +50,10 @@ static void suZeroBiasCallback(void)
 
 // // Wrench/MOB 파라미터: 기존 su_wrench 그룹명 유지(로그/툴 호환성)
 PARAM_GROUP_START(su_wrench)
+PARAM_ADD(PARAM_FLOAT, mass,            &su_mass)
+PARAM_ADD(PARAM_FLOAT, Jxx,             &Jxx)
+PARAM_ADD(PARAM_FLOAT, Jyy,             &Jyy)
+PARAM_ADD(PARAM_FLOAT, Jzz,             &Jzz)
 // 관측 이득
 PARAM_ADD(PARAM_FLOAT, Kf,              &su_Kf)
 PARAM_ADD(PARAM_FLOAT, Ktau,            &su_Ktau)
@@ -58,6 +65,9 @@ PARAM_ADD(PARAM_FLOAT, deadzone_F,      &su_deadzone_F)
 PARAM_ADD(PARAM_FLOAT, deadzone_T,      &su_deadzone_T)
 PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, zeroBias, &su_zero_bias, suZeroBiasCallback)
 PARAM_ADD(PARAM_FLOAT, cmd_fx,        &su_cmd_fx)
+PARAM_ADD(PARAM_FLOAT, comOffX,         &su_com_offset_x)
+PARAM_ADD(PARAM_FLOAT, comOffY,         &su_com_offset_y)
+PARAM_ADD(PARAM_FLOAT, comOffZ,         &su_com_offset_z)
 PARAM_ADD(PARAM_FLOAT, rOffX,           &su_r_offset_x)
 PARAM_ADD(PARAM_FLOAT, rOffY,           &su_r_offset_y)
 PARAM_ADD(PARAM_FLOAT, rOffZ,           &su_r_offset_z)

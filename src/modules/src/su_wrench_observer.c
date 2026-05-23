@@ -277,6 +277,12 @@ void suWrenchObserverUpdate(const state_t *state,
   su_body_torque_nm[2] = sanitizeFinite(THRUST2TORQUE * (-su_motor_thrust_n[0] + su_motor_thrust_n[1] -
                                                          su_motor_thrust_n[2] + su_motor_thrust_n[3]));
 
+  const float com_offset_body[3] = {su_com_offset_x, su_com_offset_y, su_com_offset_z};
+  float tau_com_body[3];
+  vec3Cross(tau_com_body, com_offset_body, su_body_force_n);
+  vec3Add(su_body_torque_nm, su_body_torque_nm, tau_com_body);
+  sanitizeVec3(su_body_torque_nm);
+
   float qx = sanitizeFinite(state->attitudeQuaternion.x);
   float qy = sanitizeFinite(state->attitudeQuaternion.y);
   float qz = sanitizeFinite(state->attitudeQuaternion.z);

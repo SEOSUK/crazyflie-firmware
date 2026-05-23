@@ -38,6 +38,9 @@ extern float su_deadzone_F;       // [N]   force deadzone
 extern float su_deadzone_T;       // [N·m] torque deadzone
 
 extern uint8_t su_zero_bias;      // [0/1] trigger MOB output bias capture
+extern float su_com_offset_x;     // [m] body-frame CoM offset x
+extern float su_com_offset_y;     // [m] body-frame CoM offset y
+extern float su_com_offset_z;     // [m] body-frame CoM offset z
 extern float su_r_offset_x;       // [m] body-frame contact offset x
 extern float su_r_offset_y;       // [m] body-frame contact offset y
 extern float su_r_offset_z;       // [m] body-frame contact offset z
