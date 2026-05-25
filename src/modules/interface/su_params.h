@@ -55,7 +55,8 @@ extern uint8_t su_traj2_shape;    // 0=None, 1=Circle, 2=Square
 extern float su_traj2_size_x;     // [m] radius for circle, side length for square
 extern float su_traj2_size_y;     // [m] radius for circle, side length for square
 extern float su_traj2_period_s;   // [s]
-extern float su_epsilon_f;        // [N] threshold for force-aligned yaw in velocity mode
+extern float su_epsilon_f_min;    // [N] lower threshold where force-aligned yaw smoothing starts
+extern float su_epsilon_f_max;    // [N] upper threshold where force-aligned yaw reaches full weight
 extern float su_yaw_force_lpf_hz; // [Hz] LPF cutoff for MOB-force yaw alignment
 
 #ifdef __cplusplus

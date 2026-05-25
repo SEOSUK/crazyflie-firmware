@@ -109,6 +109,32 @@ static float clampPositive(const float value)
   return (value > 0.0f) ? value : 0.0f;
 }
 
+static float clampUnit(const float value)
+{
+  if (value <= 0.0f) {
+    return 0.0f;
+  }
+  if (value >= 1.0f) {
+    return 1.0f;
+  }
+  return value;
+}
+
+static float smoothstep01(const float value)
+{
+  const float t = clampUnit(value);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+static float wrapAngleDeg180(const float angleDeg)
+{
+  float wrapped = fmodf(angleDeg + 180.0f, 360.0f);
+  if (wrapped < 0.0f) {
+    wrapped += 360.0f;
+  }
+  return wrapped - 180.0f;
+}
+
 static void resetFilteredForce(void)
 {
   filteredForceWorldXY[0] = 0.0f;
@@ -144,8 +170,24 @@ static void updateYawFromMobForce(void)
 
   const float forceNormXY = sqrtf(filteredForceWorldXY[0] * filteredForceWorldXY[0] +
                                   filteredForceWorldXY[1] * filteredForceWorldXY[1]);
-  if (forceNormXY > clampPositive(su_epsilon_f)) {
-    referenceYawDeg = atan2f(-filteredForceWorldXY[1], -filteredForceWorldXY[0]) * SU_RAD2DEG;
+  const float targetYawDeg = atan2f(-filteredForceWorldXY[1], -filteredForceWorldXY[0]) * SU_RAD2DEG;
+  const float epsilonFMin = clampPositive(su_epsilon_f_min);
+  float epsilonFMax = clampPositive(su_epsilon_f_max);
+  if (epsilonFMax < epsilonFMin) {
+    epsilonFMax = epsilonFMin;
+  }
+
+  float yawAlignWeight = 1.0f;
+  if (epsilonFMax > epsilonFMin) {
+    yawAlignWeight = smoothstep01((forceNormXY - epsilonFMin) / (epsilonFMax - epsilonFMin));
+  } else if (epsilonFMax > 0.0f) {
+    yawAlignWeight = smoothstep01(forceNormXY / epsilonFMax);
+  }
+
+  if (yawAlignWeight > 0.0f) {
+    const float yawErrorDeg = wrapAngleDeg180(targetYawDeg - referenceYawDeg);
+    referenceYawDeg += yawAlignWeight * yawErrorDeg;
+    referenceYawDeg = wrapAngleDeg180(referenceYawDeg);
   }
 }
 
