@@ -135,6 +135,67 @@ static float wrapAngleDeg180(const float angleDeg)
   return wrapped - 180.0f;
 }
 
+static float clampSymmetric(const float value, const float limit)
+{
+  const float positiveLimit = clampPositive(limit);
+  if (value > positiveLimit) {
+    return positiveLimit;
+  }
+  if (value < -positiveLimit) {
+    return -positiveLimit;
+  }
+  return value;
+}
+
+static float vec3Dot(const float a[3], const float b[3])
+{
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static void getPreloadNormalWorld(float outNormal[3])
+{
+  if (!outNormal) {
+    return;
+  }
+
+  (void)su_normal_estimation;
+  outNormal[0] = -1.0f;
+  outNormal[1] = 0.0f;
+  outNormal[2] = 0.0f;
+}
+
+static bool isPreloadVelocityControlActive(const uint8_t positionMode,
+                                           const uint8_t trajectoryMode,
+                                           const float forceDesired)
+{
+  return positionMode == SU_POSITION_MODE_VELOCITY &&
+         trajectoryMode == SU_TRAJECTORY_NONE &&
+         fabsf(forceDesired) > 1e-6f;
+}
+
+static void applyPreloadVelocityControl(float velocityCmdWorld[3], const float forceDesired)
+{
+  if (!velocityCmdWorld) {
+    return;
+  }
+
+  float normalWorld[3];
+  getPreloadNormalWorld(normalWorld);
+
+  float worldForce[3] = {0.0f, 0.0f, 0.0f};
+  suWrenchObserverGetWorldForce(worldForce);
+
+  const float f_n = vec3Dot(normalWorld, worldForce);
+  const float r_v = vec3Dot(normalWorld, velocityCmdWorld);
+  const float nu_n = clampSymmetric(
+    su_g_nf * (forceDesired - f_n) + su_g_nv * r_v,
+    su_nu_n_bar);
+
+  velocityCmdWorld[0] -= nu_n * normalWorld[0];
+  velocityCmdWorld[1] -= nu_n * normalWorld[1];
+  velocityCmdWorld[2] -= nu_n * normalWorld[2];
+}
+
 static void resetFilteredForce(void)
 {
   filteredForceWorldXY[0] = 0.0f;
@@ -222,7 +283,7 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
   const uint8_t positionMode = suPositionTriggerGetMode();
   const uint8_t trajectoryMode = suPositionTriggerGetTrajectoryMode();
   const uint8_t commandReference = suPositionTriggerGetCommandReference();
-
+  const float forceDesired = suPositionTriggerGetForceDesired();
   if (commandReference != lastCommandReference) {
     convertReferencePosition(&referencePosition, lastCommandReference, commandReference, referenceYawDeg);
   }
@@ -260,9 +321,17 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
     if (trajectoryMode == SU_TRAJECTORY_NONE) {
       suTrajectoryGeneratorDeactivate();
       if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
-        referencePosition.x += setpoint->position.x * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.y += setpoint->position.y * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.z += setpoint->position.z * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+        float velocityCmdWorld[3] = {
+          setpoint->position.x,
+          setpoint->position.y,
+          setpoint->position.z,
+        };
+        if (isPreloadVelocityControlActive(positionMode, trajectoryMode, forceDesired)) {
+          applyPreloadVelocityControl(velocityCmdWorld, forceDesired);
+        }
+        referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+        referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+        referencePosition.z += velocityCmdWorld[2] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
         updateYawFromMobForce();
       }
     } else {

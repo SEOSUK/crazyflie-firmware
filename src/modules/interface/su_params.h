@@ -51,10 +51,10 @@ extern uint8_t su_traj1_shape;    // 0=None, 1=Circle, 2=Square
 extern float su_traj1_size_x;     // [m] radius for circle, side length for square
 extern float su_traj1_size_y;     // [m] radius for circle, side length for square
 extern float su_traj1_period_s;   // [s]
-extern uint8_t su_traj2_shape;    // 0=None, 1=Circle, 2=Square
-extern float su_traj2_size_x;     // [m] radius for circle, side length for square
-extern float su_traj2_size_y;     // [m] radius for circle, side length for square
-extern float su_traj2_period_s;   // [s]
+extern uint8_t su_normal_estimation; // [0/1] use fixed normal or future estimator hook
+extern float su_g_nf;             // [m/(s*N)] gain from normal force tracking error
+extern float su_g_nv;             // [-] gain from normal velocity leakage
+extern float su_nu_n_bar;         // [m/s] symmetric saturation limit for normal velocity command
 extern float su_epsilon_f_min;    // [N] lower threshold where force-aligned yaw smoothing starts
 extern float su_epsilon_f_max;    // [N] upper threshold where force-aligned yaw reaches full weight
 extern float su_yaw_force_lpf_hz; // [Hz] LPF cutoff for MOB-force yaw alignment

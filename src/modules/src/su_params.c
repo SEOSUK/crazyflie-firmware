@@ -3,7 +3,6 @@
 #include "su_params.h"
 #include "su_wrench_observer.h"
 
-float su_cmd_fx          = 0.0f;       // 커맨드 Force [N]
 // ========= 전역 공유 파라미터 정의 (단일 소스) =========
 // 플랫폼/모델
 float su_mass            = CF_MASS;      // [kg] 원래는 0.0393
@@ -32,10 +31,10 @@ uint8_t su_traj1_shape    = 1;           // 0=None, 1=Circle, 2=Square
 float su_traj1_size_x     = 0.30f;       // [m]
 float su_traj1_size_y     = 0.30f;       // [m]
 float su_traj1_period_s   = 6.0f;        // [s]
-uint8_t su_traj2_shape    = 2;           // 0=None, 1=Circle, 2=Square
-float su_traj2_size_x     = 0.40f;       // [m]
-float su_traj2_size_y     = 0.40f;       // [m]
-float su_traj2_period_s   = 8.0f;        // [s]
+uint8_t su_normal_estimation = 0;        // 0: fixed normal, 1: estimator hook when implemented
+float su_g_nf             = 1.0f;        // normal force tracking gain
+float su_g_nv             = 2.0f;        // normal velocity damping gain
+float su_nu_n_bar         = 0.08f;       // [m/s] symmetric saturation of normal velocity command
 float su_epsilon_f_min    = 0.005f;      // [N] lower threshold where yaw-alignment smoothing starts
 float su_epsilon_f_max    = 0.010f;      // [N] upper threshold where yaw-alignment smoothing saturates
 float su_yaw_force_lpf_hz = 2.0f;        // [Hz] LPF cutoff for force-direction yaw alignment
@@ -75,7 +74,6 @@ PARAM_ADD(PARAM_FLOAT, Keps,            &su_Keps)
 PARAM_ADD(PARAM_FLOAT, deadzone_F,      &su_deadzone_F)
 PARAM_ADD(PARAM_FLOAT, deadzone_T,      &su_deadzone_T)
 PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, zeroBias, &su_zero_bias, suZeroBiasCallback)
-PARAM_ADD(PARAM_FLOAT, cmd_fx,        &su_cmd_fx)
 PARAM_ADD(PARAM_FLOAT, comOffX,         &su_com_offset_x)
 PARAM_ADD(PARAM_FLOAT, comOffY,         &su_com_offset_y)
 PARAM_ADD(PARAM_FLOAT, comOffZ,         &su_com_offset_z)
@@ -90,10 +88,10 @@ PARAM_ADD(PARAM_UINT8, traj1Shape,      &su_traj1_shape)
 PARAM_ADD(PARAM_FLOAT, traj1SizeX,      &su_traj1_size_x)
 PARAM_ADD(PARAM_FLOAT, traj1SizeY,      &su_traj1_size_y)
 PARAM_ADD(PARAM_FLOAT, traj1Period,     &su_traj1_period_s)
-PARAM_ADD(PARAM_UINT8, traj2Shape,      &su_traj2_shape)
-PARAM_ADD(PARAM_FLOAT, traj2SizeX,      &su_traj2_size_x)
-PARAM_ADD(PARAM_FLOAT, traj2SizeY,      &su_traj2_size_y)
-PARAM_ADD(PARAM_FLOAT, traj2Period,     &su_traj2_period_s)
+PARAM_ADD(PARAM_UINT8, preloadEn,       &su_normal_estimation)
+PARAM_ADD(PARAM_FLOAT, preloadGf,       &su_g_nf)
+PARAM_ADD(PARAM_FLOAT, preloadGv,       &su_g_nv)
+PARAM_ADD(PARAM_FLOAT, preloadNu,       &su_nu_n_bar)
 PARAM_ADD(PARAM_FLOAT, epsilonFMin,     &su_epsilon_f_min)
 PARAM_ADD(PARAM_FLOAT, epsilonFMax,     &su_epsilon_f_max)
 PARAM_ADD(PARAM_FLOAT, yawForceLpfHz,   &su_yaw_force_lpf_hz)

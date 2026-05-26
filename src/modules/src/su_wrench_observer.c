@@ -443,6 +443,8 @@ void suWrenchObserverUpdate(const state_t *state,
 
   vec3Sub(su_force_l_hat_world, su_force_l_hat_raw_world, su_force_bias_world);
   vec3Sub(su_torque_l_out_world, su_torque_l_hat_raw_world, su_torque_bias_world);
+  vec3ApplyDeadzone(su_force_l_hat_world, su_deadzone_F);
+  vec3ApplyDeadzone(su_torque_l_out_world, su_deadzone_T);
   sanitizeVec3(su_force_l_hat_world);
   sanitizeVec3(su_torque_l_out_world);
 

@@ -28,6 +28,7 @@ void suPositionTriggerUpdate(void);
 uint8_t suPositionTriggerGetMode(void);
 uint8_t suPositionTriggerGetTrajectoryMode(void);
 uint8_t suPositionTriggerGetCommandReference(void);
+float suPositionTriggerGetForceDesired(void);
 
 #ifdef __cplusplus
 }

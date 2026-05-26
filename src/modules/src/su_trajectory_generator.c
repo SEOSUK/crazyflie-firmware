@@ -35,16 +35,11 @@ static suTrajectoryConfig_t getTrajectoryConfig(uint8_t trajectoryMode)
     .periodS = 1.0f,
   };
 
-  if (trajectoryMode == SU_TRAJECTORY_1) {
+  if (trajectoryMode != SU_TRAJECTORY_NONE) {
     config.shape = su_traj1_shape;
     config.sizeX = su_traj1_size_x;
     config.sizeY = su_traj1_size_y;
     config.periodS = su_traj1_period_s;
-  } else if (trajectoryMode == SU_TRAJECTORY_2) {
-    config.shape = su_traj2_shape;
-    config.sizeX = su_traj2_size_x;
-    config.sizeY = su_traj2_size_y;
-    config.periodS = su_traj2_period_s;
   }
 
   if (config.periodS < 1e-3f) {
