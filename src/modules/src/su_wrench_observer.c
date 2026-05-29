@@ -15,6 +15,9 @@
 #define SU_CONSISTENCY_NONE     0
 #define SU_CONSISTENCY_RESIDUAL 1
 #define SU_CONSISTENCY_BOTH     2
+#define SU_OBSERVER_JXX         1.9e-5f
+#define SU_OBSERVER_JYY         1.9e-5f
+#define SU_OBSERVER_JZZ         3.0e-5f
 
 static float su_motor_thrust_n[4];
 static uint16_t su_motor_pwm_ratio[4];
@@ -26,6 +29,7 @@ static float su_state_vel_world[3];
 static float su_vel_from_pos_world[3];
 static float su_state_acc_world_mps2[3];
 static float su_vel_used_world[3];
+static float su_contact_point_vel_world[3];
 
 static float su_gyro_body_rad_s[3];
 static float su_r_offset_body_m[3];
@@ -119,19 +123,6 @@ static void vec3Cross(float out[3], const float a[3], const float b[3])
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static void vec3ApplyDeadzone(float vec[3], const float deadzone)
-{
-  if (deadzone <= 0.0f) {
-    return;
-  }
-
-  for (int i = 0; i < 3; ++i) {
-    if (fabsf(vec[i]) < deadzone) {
-      vec[i] = 0.0f;
-    }
-  }
-}
-
 static void quatToRotMat(const float qx, const float qy, const float qz, const float qw, float R[3][3])
 {
   const float xx = qx * qx;
@@ -200,6 +191,7 @@ void suWrenchObserverInit(void)
     su_vel_from_pos_world[i] = 0.0f;
     su_state_acc_world_mps2[i] = 0.0f;
     su_vel_used_world[i] = 0.0f;
+    su_contact_point_vel_world[i] = 0.0f;
     su_gyro_body_rad_s[i] = 0.0f;
     su_r_offset_body_m[i] = 0.0f;
     su_r_offset_world_m[i] = 0.0f;
@@ -343,9 +335,16 @@ void suWrenchObserverUpdate(const state_t *state,
   mat3MulVec(su_r_offset_world_m, R, su_r_offset_body_m);
   sanitizeVec3(su_r_offset_world_m);
 
-  su_rot_momentum_body[0] = sanitizeFinite(Jxx * su_gyro_body_rad_s[0]);
-  su_rot_momentum_body[1] = sanitizeFinite(Jyy * su_gyro_body_rad_s[1]);
-  su_rot_momentum_body[2] = sanitizeFinite(Jzz * su_gyro_body_rad_s[2]);
+  float omega_cross_r_body[3];
+  float contact_offset_vel_world[3];
+  vec3Cross(omega_cross_r_body, su_gyro_body_rad_s, su_r_offset_body_m);
+  mat3MulVec(contact_offset_vel_world, R, omega_cross_r_body);
+  vec3Add(su_contact_point_vel_world, su_vel_used_world, contact_offset_vel_world);
+  sanitizeVec3(su_contact_point_vel_world);
+
+  su_rot_momentum_body[0] = sanitizeFinite(SU_OBSERVER_JXX * su_gyro_body_rad_s[0]);
+  su_rot_momentum_body[1] = sanitizeFinite(SU_OBSERVER_JYY * su_gyro_body_rad_s[1]);
+  su_rot_momentum_body[2] = sanitizeFinite(SU_OBSERVER_JZZ * su_gyro_body_rad_s[2]);
 
   su_lin_momentum_world[0] = sanitizeFinite(su_mass * su_vel_used_world[0]);
   su_lin_momentum_world[1] = sanitizeFinite(su_mass * su_vel_used_world[1]);
@@ -366,7 +365,6 @@ void suWrenchObserverUpdate(const state_t *state,
 
   vec3ScaleAdd(su_rot_momentum_hat_body, su_rot_momentum_hat_body, dt, rot_momentum_hat_dot);
   vec3ScaleAdd(su_torque_l_hat_body, su_torque_l_hat_body, dt, torque_l_hat_dot_body);
-  vec3ApplyDeadzone(su_torque_l_hat_body, su_deadzone_T);
   sanitizeVec3(su_rot_momentum_hat_body);
   sanitizeVec3(su_torque_l_hat_body);
 
@@ -388,7 +386,6 @@ void suWrenchObserverUpdate(const state_t *state,
   float force_l_hat_none_dot_world[3];
   vec3Scale(force_l_hat_none_dot_world, su_lin_momentum_err_none_world, su_Kf);
   vec3ScaleAdd(su_force_l_hat_none_world, su_force_l_hat_none_world, dt, force_l_hat_none_dot_world);
-  vec3ApplyDeadzone(su_force_l_hat_none_world, su_deadzone_F);
   sanitizeVec3(su_force_l_hat_none_world);
 
   vec3Sub(su_lin_momentum_err_residual_world, su_lin_momentum_world, su_lin_momentum_hat_residual_world);
@@ -413,7 +410,6 @@ void suWrenchObserverUpdate(const state_t *state,
   vec3Scale(force_l_hat_residual_dot_world, su_lin_momentum_err_residual_world, su_Kf);
   vec3Add(force_l_hat_residual_dot_world, force_l_hat_residual_dot_world, su_consistency_correction_world);
   vec3ScaleAdd(su_force_l_hat_residual_world, su_force_l_hat_residual_world, dt, force_l_hat_residual_dot_world);
-  vec3ApplyDeadzone(su_force_l_hat_residual_world, su_deadzone_F);
   sanitizeVec3(su_force_l_hat_residual_world);
 
   switch (su_consistency_mode) {
@@ -443,8 +439,7 @@ void suWrenchObserverUpdate(const state_t *state,
 
   vec3Sub(su_force_l_hat_world, su_force_l_hat_raw_world, su_force_bias_world);
   vec3Sub(su_torque_l_out_world, su_torque_l_hat_raw_world, su_torque_bias_world);
-  vec3ApplyDeadzone(su_force_l_hat_world, su_deadzone_F);
-  vec3ApplyDeadzone(su_torque_l_out_world, su_deadzone_T);
+  su_force_l_hat_world[2] *= 0.1f;
   sanitizeVec3(su_force_l_hat_world);
   sanitizeVec3(su_torque_l_out_world);
 
@@ -461,6 +456,28 @@ void suWrenchObserverGetWorldForce(float outF[3])
   outF[0] = su_force_l_hat_world[0];
   outF[1] = su_force_l_hat_world[1];
   outF[2] = su_force_l_hat_world[2];
+}
+
+void suWrenchObserverGetStateVelocityWorld(float outV[3])
+{
+  if (!outV) {
+    return;
+  }
+
+  outV[0] = su_state_vel_world[0];
+  outV[1] = su_state_vel_world[1];
+  outV[2] = su_state_vel_world[2];
+}
+
+void suWrenchObserverGetContactPointVelocityWorld(float outV[3])
+{
+  if (!outV) {
+    return;
+  }
+
+  outV[0] = su_contact_point_vel_world[0];
+  outV[1] = su_contact_point_vel_world[1];
+  outV[2] = su_contact_point_vel_world[2];
 }
 
 LOG_GROUP_START(suWrenchObs)
@@ -492,9 +509,6 @@ LOG_GROUP_START(suWrenchObs)
 LOG_ADD(LOG_FLOAT, tauLWx, &su_torque_l_out_world[0])  // N*m, bias-compensated lumped torque in world frame
 LOG_ADD(LOG_FLOAT, tauLWy, &su_torque_l_out_world[1])  // N*m, bias-compensated lumped torque in world frame
 LOG_ADD(LOG_FLOAT, tauLWz, &su_torque_l_out_world[2])  // N*m, bias-compensated lumped torque in world frame
-LOG_ADD(LOG_FLOAT, tauRawWx, &su_torque_l_hat_raw_world[0])  // N*m, raw lumped torque estimate in world frame
-LOG_ADD(LOG_FLOAT, tauRawWy, &su_torque_l_hat_raw_world[1])  // N*m, raw lumped torque estimate in world frame
-LOG_ADD(LOG_FLOAT, tauRawWz, &su_torque_l_hat_raw_world[2])  // N*m, raw lumped torque estimate in world frame
 // LOG_ADD(LOG_FLOAT, tauBiasWx, &su_torque_bias_world[0])  // N*m, captured torque bias in world frame
 // LOG_ADD(LOG_FLOAT, tauBiasWy, &su_torque_bias_world[1])  // N*m, captured torque bias in world frame
 // LOG_ADD(LOG_FLOAT, tauBiasWz, &su_torque_bias_world[2])  // N*m, captured torque bias in world frame
@@ -518,9 +532,6 @@ LOG_ADD(LOG_FLOAT, fHatRWz, &su_force_l_hat_residual_world[2]) // N, momentum+co
 LOG_ADD(LOG_FLOAT, fHatWx, &su_force_l_hat_world[0])   // N, bias-compensated lumped force in world frame
 LOG_ADD(LOG_FLOAT, fHatWy, &su_force_l_hat_world[1])   // N, bias-compensated lumped force in world frame
 LOG_ADD(LOG_FLOAT, fHatWz, &su_force_l_hat_world[2])   // N, bias-compensated lumped force in world frame
-LOG_ADD(LOG_FLOAT, fRawWx, &su_force_l_hat_raw_world[0])   // N, selected raw lumped force estimate in world frame
-LOG_ADD(LOG_FLOAT, fRawWy, &su_force_l_hat_raw_world[1])   // N, selected raw lumped force estimate in world frame
-LOG_ADD(LOG_FLOAT, fRawWz, &su_force_l_hat_raw_world[2])   // N, selected raw lumped force estimate in world frame
 // LOG_ADD(LOG_FLOAT, fBiasWx, &su_force_bias_world[0])   // N, captured force bias in world frame
 // LOG_ADD(LOG_FLOAT, fBiasWy, &su_force_bias_world[1])   // N, captured force bias in world frame
 // LOG_ADD(LOG_FLOAT, fBiasWz, &su_force_bias_world[2])   // N, captured force bias in world frame
@@ -528,9 +539,6 @@ LOG_ADD(LOG_FLOAT, fRawWz, &su_force_l_hat_raw_world[2])   // N, selected raw lu
 // LOG_ADD(LOG_FLOAT, fHatBy, &su_force_l_hat_body[1])    // N, estimated lumped force in body frame
 // LOG_ADD(LOG_FLOAT, fHatBz, &su_force_l_hat_body[2])    // N, estimated lumped force in body frame
 
-LOG_ADD(LOG_FLOAT, epsTx, &su_consistency_residual_world[0]) // N*m, point-contact consistency residual
-LOG_ADD(LOG_FLOAT, epsTy, &su_consistency_residual_world[1]) // N*m, point-contact consistency residual
-LOG_ADD(LOG_FLOAT, epsTz, &su_consistency_residual_world[2]) // N*m, point-contact consistency residual
 // LOG_ADD(LOG_FLOAT, corrFx, &su_consistency_correction_world[0]) // N/s, consistency correction term
 // LOG_ADD(LOG_FLOAT, corrFy, &su_consistency_correction_world[1]) // N/s, consistency correction term
 // LOG_ADD(LOG_FLOAT, corrFz, &su_consistency_correction_world[2]) // N/s, consistency correction term
@@ -545,23 +553,6 @@ LOG_ADD(LOG_FLOAT, f2, &su_motor_thrust_n[1])           // N, motor 2 thrust com
 LOG_ADD(LOG_FLOAT, f3, &su_motor_thrust_n[2])           // N, motor 3 thrust command (pre-battery-comp, pre-cap)
 LOG_ADD(LOG_FLOAT, f4, &su_motor_thrust_n[3])           // N, motor 4 thrust command (pre-battery-comp, pre-cap)
 
-LOG_ADD(LOG_UINT16, pwm1, &su_motor_pwm_ratio[0])       // ratio, final actuator command after battery compensation and cap
-LOG_ADD(LOG_UINT16, pwm2, &su_motor_pwm_ratio[1])       // ratio, final actuator command after battery compensation and cap
-LOG_ADD(LOG_UINT16, pwm3, &su_motor_pwm_ratio[2])       // ratio, final actuator command after battery compensation and cap
-LOG_ADD(LOG_UINT16, pwm4, &su_motor_pwm_ratio[3])       // ratio, final actuator command after battery compensation and cap
-
-LOG_ADD(LOG_FLOAT, bodyFx, &su_body_force_n[0])         // N, body frame input force
-LOG_ADD(LOG_FLOAT, bodyFy, &su_body_force_n[1])         // N, body frame input force
-LOG_ADD(LOG_FLOAT, bodyFz, &su_body_force_n[2])         // N, body frame input force
-
-LOG_ADD(LOG_FLOAT, worldFx, &su_world_force_n[0])       // N, world frame input force
-LOG_ADD(LOG_FLOAT, worldFy, &su_world_force_n[1])       // N, world frame input force
-LOG_ADD(LOG_FLOAT, worldFz, &su_world_force_n[2])       // N, world frame input force
-
-LOG_ADD(LOG_FLOAT, bodyTx, &su_body_torque_nm[0])       // N*m, body frame input torque
-LOG_ADD(LOG_FLOAT, bodyTy, &su_body_torque_nm[1])       // N*m, body frame input torque
-LOG_ADD(LOG_FLOAT, bodyTz, &su_body_torque_nm[2])       // N*m, body frame input torque
-
 LOG_ADD(LOG_FLOAT, stateVx, &su_state_vel_world[0])     // m/s, world frame state.velocity
 LOG_ADD(LOG_FLOAT, stateVy, &su_state_vel_world[1])     // m/s, world frame state.velocity
 LOG_ADD(LOG_FLOAT, stateVz, &su_state_vel_world[2])     // m/s, world frame state.velocity
@@ -573,6 +564,4 @@ LOG_ADD(LOG_FLOAT, posVz, &su_vel_from_pos_world[2])    // m/s, world frame velo
 LOG_ADD(LOG_FLOAT, accWx, &su_state_acc_world_mps2[0])  // m/s^2, world frame state.acc
 LOG_ADD(LOG_FLOAT, accWy, &su_state_acc_world_mps2[1])  // m/s^2, world frame state.acc
 LOG_ADD(LOG_FLOAT, accWz, &su_state_acc_world_mps2[2])  // m/s^2, world frame state.acc (gravity removed by firmware convention)
-
-LOG_ADD(LOG_UINT32, zeroCnt, &su_zero_bias_count)       // count, zeroBias requests in logging-only mode
 LOG_GROUP_STOP(suWrenchObs)

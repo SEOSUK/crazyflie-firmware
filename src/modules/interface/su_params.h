@@ -11,8 +11,6 @@
  * Units:
  *  - mass:            [kg]
  *  - Kf, Ktau:        [1/s]
- *  - deadzone_F:      [N]
- *  - deadzone_T:      [N·m]
  */
 
 #ifdef __cplusplus
@@ -23,9 +21,6 @@ extern "C" {
 
 // -------- Platform / common --------
 extern float su_mass;             // [kg]
-extern float Jxx;                 // [kg·m^2]
-extern float Jyy;                 // [kg·m^2]
-extern float Jzz;                 // [kg·m^2]
 
 // -------- Wrench observer / MOB --------
 extern float su_Kf;               // [1/s] linear momentum observer gain
@@ -33,9 +28,6 @@ extern float su_Ktau;             // [1/s] angular momentum observer gain
 extern float su_Kp;               // [1/s] translational momentum correction gain
 extern float su_Kh;               // [1/s] rotational momentum correction gain
 extern float su_Keps;             // [1/s] consistency residual correction gain
-
-extern float su_deadzone_F;       // [N]   force deadzone
-extern float su_deadzone_T;       // [N·m] torque deadzone
 
 extern uint8_t su_zero_bias;      // [0/1] trigger MOB output bias capture
 extern float su_com_offset_x;     // [m] body-frame CoM offset x
@@ -51,7 +43,10 @@ extern uint8_t su_traj1_shape;    // 0=None, 1=Circle, 2=Square
 extern float su_traj1_size_x;     // [m] radius for circle, side length for square
 extern float su_traj1_size_y;     // [m] radius for circle, side length for square
 extern float su_traj1_period_s;   // [s]
-extern uint8_t su_normal_estimation; // [0/1] use fixed normal or future estimator hook
+extern uint8_t su_normal_estimation; // 0: fixed normal, 1: force-dominant normal estimator enabled
+extern float su_normal_beta;      // [1/s] normal-axis memory decay
+extern float su_normal_epsilon_g; // [m^2/s^2] velocity projection regularization
+extern float su_normal_epsilon_f; // [N] minimum force evidence norm
 extern float su_g_nf;             // [m/(s*N)] gain from normal force tracking error
 extern float su_g_nv;             // [-] gain from normal velocity leakage
 extern float su_nu_n_bar;         // [m/s] symmetric saturation limit for normal velocity command

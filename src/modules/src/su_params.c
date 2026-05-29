@@ -6,19 +6,14 @@
 // ========= 전역 공유 파라미터 정의 (단일 소스) =========
 // 플랫폼/모델
 float su_mass            = CF_MASS;      // [kg] 원래는 0.0393
-float Jxx                = 1.9e-5f;      // [kg·m^2]
-float Jyy                = 1.9e-5f;      // [kg·m^2]
-float Jzz                = 3.0e-5f;      // [kg·m^2]
 
 
 // Wrench observer / MOB 관련
-float su_Kf              = 0.3f;         // [1/s] 선운동량 관측 이득
-float su_Ktau            = 0.3f;         // [1/s] 각운동량 관측 이득
-float su_Kp              = 0.3f;         // [1/s] 선운동량 상태 보정 이득
-float su_Kh              = 0.3f;         // [1/s] 각운동량 상태 보정 이득
+float su_Kf              = 30.0f;        // [1/s] linear momentum observer gain
+float su_Ktau            = 10.0f;        // [1/s] angular momentum observer gain
+float su_Kp              = 10.9544511501f; // [1/s] translational momentum correction gain
+float su_Kh              = 6.32f;        // [1/s] rotational momentum correction gain
 float su_Keps            = 0.3f;         // [1/s] consistency residual 보정 이득
-float su_deadzone_F      = 0.000f;       // [N]   힘 deadzone
-float su_deadzone_T      = 0.0000f;      // [N·m] 토크 deadzone
 uint8_t su_zero_bias     = 0;            // MOB output bias capture trigger
 float su_com_offset_x    = 0.0f;         // [m] body-frame CoM offset x
 float su_com_offset_y    = 0.0f;         // [m] body-frame CoM offset y
@@ -31,7 +26,10 @@ uint8_t su_traj1_shape    = 1;           // 0=None, 1=Circle, 2=Square
 float su_traj1_size_x     = 0.30f;       // [m]
 float su_traj1_size_y     = 0.30f;       // [m]
 float su_traj1_period_s   = 6.0f;        // [s]
-uint8_t su_normal_estimation = 0;        // 0: fixed normal, 1: estimator hook when implemented
+uint8_t su_normal_estimation = 1;        // 0: fixed normal, 1: enable force-dominant normal estimator
+float su_normal_beta      = 3.0f;        // [1/s] normal-axis memory decay
+float su_normal_epsilon_g = 0.003f;      // [m^2/s^2] velocity projection regularization
+float su_normal_epsilon_f = 0.01f;       // [N] minimum force evidence norm
 float su_g_nf             = 1.0f;        // normal force tracking gain
 float su_g_nv             = 2.0f;        // normal velocity damping gain
 float su_nu_n_bar         = 0.08f;       // [m/s] symmetric saturation of normal velocity command
@@ -53,26 +51,13 @@ static void suZeroBiasCallback(void)
 // PARAM_GROUP_START(su_platform)
 // // Platform / model parameters
 // PARAM_ADD(PARAM_FLOAT, mass, &su_mass)
-// PARAM_ADD(PARAM_FLOAT, Jxx,  &Jxx)
-// PARAM_ADD(PARAM_FLOAT, Jyy,  &Jyy)
-// PARAM_ADD(PARAM_FLOAT, Jzz,  &Jzz)
 // PARAM_GROUP_STOP(su_platform)
 
 // // Wrench/MOB 파라미터: 기존 su_wrench 그룹명 유지(로그/툴 호환성)
 PARAM_GROUP_START(su_wrench)
 PARAM_ADD(PARAM_FLOAT, mass,            &su_mass)
-PARAM_ADD(PARAM_FLOAT, Jxx,             &Jxx)
-PARAM_ADD(PARAM_FLOAT, Jyy,             &Jyy)
-PARAM_ADD(PARAM_FLOAT, Jzz,             &Jzz)
 // 관측 이득
-PARAM_ADD(PARAM_FLOAT, Kf,              &su_Kf)
-PARAM_ADD(PARAM_FLOAT, Ktau,            &su_Ktau)
-PARAM_ADD(PARAM_FLOAT, Kp,              &su_Kp)
-PARAM_ADD(PARAM_FLOAT, Kh,              &su_Kh)
 PARAM_ADD(PARAM_FLOAT, Keps,            &su_Keps)
-// Deadzone
-PARAM_ADD(PARAM_FLOAT, deadzone_F,      &su_deadzone_F)
-PARAM_ADD(PARAM_FLOAT, deadzone_T,      &su_deadzone_T)
 PARAM_ADD_WITH_CALLBACK(PARAM_UINT8, zeroBias, &su_zero_bias, suZeroBiasCallback)
 PARAM_ADD(PARAM_FLOAT, comOffX,         &su_com_offset_x)
 PARAM_ADD(PARAM_FLOAT, comOffY,         &su_com_offset_y)
@@ -89,6 +74,9 @@ PARAM_ADD(PARAM_FLOAT, traj1SizeX,      &su_traj1_size_x)
 PARAM_ADD(PARAM_FLOAT, traj1SizeY,      &su_traj1_size_y)
 PARAM_ADD(PARAM_FLOAT, traj1Period,     &su_traj1_period_s)
 PARAM_ADD(PARAM_UINT8, preloadEn,       &su_normal_estimation)
+PARAM_ADD(PARAM_FLOAT, normBeta,        &su_normal_beta)
+PARAM_ADD(PARAM_FLOAT, normEpsG,        &su_normal_epsilon_g)
+PARAM_ADD(PARAM_FLOAT, normEpsF,        &su_normal_epsilon_f)
 PARAM_ADD(PARAM_FLOAT, preloadGf,       &su_g_nf)
 PARAM_ADD(PARAM_FLOAT, preloadGv,       &su_g_nv)
 PARAM_ADD(PARAM_FLOAT, preloadNu,       &su_nu_n_bar)

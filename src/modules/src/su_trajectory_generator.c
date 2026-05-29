@@ -7,6 +7,7 @@
 
 #define SU_TRAJECTORY_RATE_HZ 50
 #define SU_PI_F 3.14159265358979323846f
+#define SU_TRAJECTORY_RAMP_UP_S 5.0f
 
 typedef enum {
   SU_TRAJECTORY_SHAPE_NONE = 0,
@@ -25,6 +26,44 @@ static bool trajectoryActive = false;
 static point_t trajectoryOrigin;
 static float trajectoryYawDeg = 0.0f;
 static float trajectoryElapsedS = 0.0f;
+
+static float clampUnit(const float value)
+{
+  if (value <= 0.0f) {
+    return 0.0f;
+  }
+  if (value >= 1.0f) {
+    return 1.0f;
+  }
+  return value;
+}
+
+static float smoothstep01(const float value)
+{
+  const float t = clampUnit(value);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+static float getRampScale(void)
+{
+  if (SU_TRAJECTORY_RAMP_UP_S <= 1e-6f) {
+    return 1.0f;
+  }
+
+  return smoothstep01(trajectoryElapsedS / SU_TRAJECTORY_RAMP_UP_S);
+}
+
+static void applyRampToOffset(point_t *offset)
+{
+  if (!offset) {
+    return;
+  }
+
+  const float rampScale = getRampScale();
+  offset->x *= rampScale;
+  offset->y *= rampScale;
+  offset->z *= rampScale;
+}
 
 static suTrajectoryConfig_t getTrajectoryConfig(uint8_t trajectoryMode)
 {
@@ -49,18 +88,18 @@ static suTrajectoryConfig_t getTrajectoryConfig(uint8_t trajectoryMode)
   return config;
 }
 
-static void updateCircle(const suTrajectoryConfig_t *config, point_t *position, float *yawDeg)
+static void updateCircleLocalOffset(const suTrajectoryConfig_t *config, point_t *localOffset, float *yawDeg)
 {
   const float omega = 2.0f * SU_PI_F / config->periodS;
   const float phase = omega * trajectoryElapsedS;
 
-  position->x = trajectoryOrigin.x;
-  position->y = trajectoryOrigin.y + config->sizeX * cosf(phase);
-  position->z = trajectoryOrigin.z + config->sizeY * sinf(phase);
+  localOffset->x = 0.0f;
+  localOffset->y = config->sizeX * cosf(phase);
+  localOffset->z = config->sizeY * sinf(phase);
   *yawDeg = trajectoryYawDeg;
 }
 
-static void updateSquare(const suTrajectoryConfig_t *config, point_t *position, float *yawDeg)
+static void updateSquareLocalOffset(const suTrajectoryConfig_t *config, point_t *localOffset, float *yawDeg)
 {
   const float segmentDuration = config->periodS / 4.0f;
   const float wrapped = fmodf(trajectoryElapsedS, config->periodS);
@@ -71,25 +110,25 @@ static void updateSquare(const suTrajectoryConfig_t *config, point_t *position, 
 
   switch (segment) {
     case 0:
-      position->y = trajectoryOrigin.y - halfY + config->sizeX * alpha;
-      position->z = trajectoryOrigin.z - halfZ;
+      localOffset->y = -halfY + config->sizeX * alpha;
+      localOffset->z = -halfZ;
       break;
     case 1:
-      position->y = trajectoryOrigin.y + halfY;
-      position->z = trajectoryOrigin.z - halfZ + config->sizeY * alpha;
+      localOffset->y = +halfY;
+      localOffset->z = -halfZ + config->sizeY * alpha;
       break;
     case 2:
-      position->y = trajectoryOrigin.y + halfY - config->sizeX * alpha;
-      position->z = trajectoryOrigin.z + halfZ;
+      localOffset->y = +halfY - config->sizeX * alpha;
+      localOffset->z = +halfZ;
       break;
     case 3:
     default:
-      position->y = trajectoryOrigin.y - halfY;
-      position->z = trajectoryOrigin.z + halfZ - config->sizeY * alpha;
+      localOffset->y = -halfY;
+      localOffset->z = +halfZ - config->sizeY * alpha;
       break;
   }
 
-  position->x = trajectoryOrigin.x;
+  localOffset->x = 0.0f;
   *yawDeg = trajectoryYawDeg;
 }
 
@@ -128,11 +167,11 @@ bool suTrajectoryGeneratorIsActive(void)
   return trajectoryActive;
 }
 
-void suTrajectoryGeneratorUpdate(uint8_t trajectoryMode, stabilizerStep_t stabilizerStep, point_t *position, float *yawDeg)
+void suTrajectoryGeneratorUpdateLocalOffset(uint8_t trajectoryMode, stabilizerStep_t stabilizerStep, point_t *localOffset, float *yawDeg)
 {
   const suTrajectoryConfig_t config = getTrajectoryConfig(trajectoryMode);
 
-  if (!trajectoryActive || !position || !yawDeg || trajectoryMode == SU_TRAJECTORY_NONE) {
+  if (!trajectoryActive || !localOffset || !yawDeg || trajectoryMode == SU_TRAJECTORY_NONE) {
     return;
   }
 
@@ -147,14 +186,29 @@ void suTrajectoryGeneratorUpdate(uint8_t trajectoryMode, stabilizerStep_t stabil
 
   switch (config.shape) {
     case SU_TRAJECTORY_SHAPE_CIRCLE:
-      updateCircle(&config, position, yawDeg);
+      updateCircleLocalOffset(&config, localOffset, yawDeg);
+      applyRampToOffset(localOffset);
       break;
     case SU_TRAJECTORY_SHAPE_SQUARE:
-      updateSquare(&config, position, yawDeg);
+      updateSquareLocalOffset(&config, localOffset, yawDeg);
+      applyRampToOffset(localOffset);
       break;
     case SU_TRAJECTORY_SHAPE_NONE:
     default:
       trajectoryActive = false;
       break;
   }
+}
+
+void suTrajectoryGeneratorUpdate(uint8_t trajectoryMode, stabilizerStep_t stabilizerStep, point_t *position, float *yawDeg)
+{
+  point_t localOffset = {0.0f, 0.0f, 0.0f};
+  suTrajectoryGeneratorUpdateLocalOffset(trajectoryMode, stabilizerStep, &localOffset, yawDeg);
+  if (!position) {
+    return;
+  }
+
+  position->x = trajectoryOrigin.x + localOffset.x;
+  position->y = trajectoryOrigin.y + localOffset.y;
+  position->z = trajectoryOrigin.z + localOffset.z;
 }

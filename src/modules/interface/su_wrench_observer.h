@@ -18,6 +18,8 @@ void suWrenchObserverUpdate(const state_t *state,
                             float dt);
                             
 void suWrenchObserverGetWorldForce(float outF[3]);
+void suWrenchObserverGetStateVelocityWorld(float outV[3]);
+void suWrenchObserverGetContactPointVelocityWorld(float outV[3]);
 void suWrenchObserverRequestZeroBias(void);
 
 #ifdef __cplusplus

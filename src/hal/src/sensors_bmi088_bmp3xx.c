@@ -1074,19 +1074,4 @@ PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accTrimRoll, &accTrimRoll)
  */
 PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accTrimPitch, &accTrimPitch)
 
-/**
- * @brief Manual accelerometer X bias in body frame after airframe alignment [G]
- */
-PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasX, &accBiasX)
-
-/**
- * @brief Manual accelerometer Y bias in body frame after airframe alignment [G]
- */
-PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasY, &accBiasY)
-
-/**
- * @brief Manual accelerometer Z bias in body frame after airframe alignment [G]
- */
-PARAM_ADD(PARAM_FLOAT | PARAM_PERSISTENT, accBiasZ, &accBiasZ)
-
 PARAM_GROUP_STOP(imu_sensors)
