@@ -1,10 +1,13 @@
 #include "su_position_trigger.h"
 
 #include "app_channel.h"
+#include "su_params.h"
 #include <math.h>
 
 #define SU_POSITION_TRIGGER_MAGIC   0xA5
 #define SU_POSITION_TRIGGER_VERSION 0x02
+#define SU_HOVER_CALIBRATION_TRIGGER_MAGIC   0xA6
+#define SU_HOVER_CALIBRATION_TRIGGER_VERSION 0x01
 
 typedef struct __attribute__((packed)) {
   uint8_t magic;
@@ -14,6 +17,14 @@ typedef struct __attribute__((packed)) {
   uint8_t commandReference;
   float forceDesired;
 } su_position_trigger_packet_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t magic;
+  uint8_t version;
+  float mass;
+  float comOffX;
+  float comOffY;
+} su_hover_calibration_packet_t;
 
 static uint8_t currentPositionMode = SU_POSITION_MODE_POSITION;
 static uint8_t currentTrajectoryMode = SU_TRAJECTORY_NONE;
@@ -46,17 +57,36 @@ void suPositionTriggerInit(void)
 
 void suPositionTriggerUpdate(void)
 {
-  su_position_trigger_packet_t packet;
+  uint8_t packetBuffer[APPCHANNEL_MTU];
+  size_t packetLength = 0;
 
-  while (appchannelReceiveDataPacket(&packet, sizeof(packet), 0) >= sizeof(packet)) {
-    if (packet.magic != SU_POSITION_TRIGGER_MAGIC || packet.version != SU_POSITION_TRIGGER_VERSION) {
-      continue;
+  while ((packetLength = appchannelReceiveDataPacket(packetBuffer, sizeof(packetBuffer), 0)) > 0) {
+    if (packetLength >= sizeof(su_position_trigger_packet_t)) {
+      const su_position_trigger_packet_t* packet = (const su_position_trigger_packet_t*)packetBuffer;
+      if (packet->magic == SU_POSITION_TRIGGER_MAGIC && packet->version == SU_POSITION_TRIGGER_VERSION) {
+        currentPositionMode = sanitizePositionMode(packet->positionMode);
+        currentTrajectoryMode = sanitizeTrajectoryMode(packet->trajectoryMode);
+        currentCommandReference = sanitizeCommandReference(packet->commandReference);
+        currentForceDesired = isfinite(packet->forceDesired) ? packet->forceDesired : 0.0f;
+        continue;
+      }
     }
 
-    currentPositionMode = sanitizePositionMode(packet.positionMode);
-    currentTrajectoryMode = sanitizeTrajectoryMode(packet.trajectoryMode);
-    currentCommandReference = sanitizeCommandReference(packet.commandReference);
-    currentForceDesired = isfinite(packet.forceDesired) ? packet.forceDesired : 0.0f;
+    if (packetLength >= sizeof(su_hover_calibration_packet_t)) {
+      const su_hover_calibration_packet_t* packet = (const su_hover_calibration_packet_t*)packetBuffer;
+      if (packet->magic == SU_HOVER_CALIBRATION_TRIGGER_MAGIC &&
+          packet->version == SU_HOVER_CALIBRATION_TRIGGER_VERSION) {
+        if (isfinite(packet->mass) && packet->mass > 0.0f) {
+          su_mass = packet->mass;
+        }
+        if (isfinite(packet->comOffX)) {
+          su_com_offset_x = packet->comOffX;
+        }
+        if (isfinite(packet->comOffY)) {
+          su_com_offset_y = packet->comOffY;
+        }
+      }
+    }
   }
 }
 
