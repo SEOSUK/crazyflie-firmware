@@ -92,6 +92,8 @@ static STATS_CNT_RATE_DEFINE(stabilizerRate, 500);
 static rateSupervisor_t rateSupervisorContext;
 static bool rateWarningDisplayed = false;
 SemaphoreHandle_t xRateSupervisorSemaphore;
+static uint32_t stabilizerLoopElapsedUs = 0;
+static uint32_t stabilizerLoopElapsedUsMax = 0;
 
 static struct {
   // position - mm
@@ -329,6 +331,7 @@ static void stabilizerTask(void* param)
   while(1) {
     // The sensor should unlock at 1kHz
     sensorsWaitDataReady();
+    const uint32_t loopStartUs = usecTimestamp();
 
     // update sensorData struct (for logging variables)
     sensorsAcquire(&sensorData);
@@ -409,6 +412,11 @@ static void stabilizerTask(void* param)
       calcSensorToOutputLatency(&sensorData);
       stabilizerStep++;
       STATS_CNT_RATE_EVENT(&stabilizerRate);
+    }
+
+    stabilizerLoopElapsedUs = usecTimestamp() - loopStartUs;
+    if (stabilizerLoopElapsedUs > stabilizerLoopElapsedUsMax) {
+      stabilizerLoopElapsedUsMax = stabilizerLoopElapsedUs;
     }
 
     xSemaphoreGive(xRateSupervisorSemaphore);
@@ -595,6 +603,14 @@ STATS_CNT_RATE_LOG_ADD(rtStab, &stabilizerRate)
  *    Note: Used for debugging but could also be used as a system test
  */
 LOG_ADD(LOG_UINT32, intToOut, &inToOutLatency)
+/**
+ * @brief Elapsed runtime of one stabilizer loop iteration, excluding the wait-for-data sleep [us]
+ */
+LOG_ADD(LOG_UINT32, loopDtUs, &stabilizerLoopElapsedUs)
+/**
+ * @brief Maximum observed stabilizer loop elapsed runtime since boot [us]
+ */
+LOG_ADD(LOG_UINT32, loopDtUsMax, &stabilizerLoopElapsedUsMax)
 LOG_GROUP_STOP(stabilizer)
 
 /**

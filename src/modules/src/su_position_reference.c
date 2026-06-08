@@ -30,8 +30,14 @@ static float normalForceEvidenceWorld[3] = {-1.0f, 0.0f, 0.0f};
 static float normalProjectedCandidateWorld[3] = {-1.0f, 0.0f, 0.0f};
 static float normalEstimateWorld[3] = {-1.0f, 0.0f, 0.0f};
 static float filteredContactVelWorld[3] = {0.0f, 0.0f, 0.0f};
+static float previousNormalEstimateWorld[3] = {-1.0f, 0.0f, 0.0f};
+static float omegaNRaw = 0.0f;
+static float omegaNLpf = 0.0f;
+static float normalVelocityLeakageRaw = 0.0f;
+static float normalVelocityLeakageLpf = 0.0f;
 static bool filteredContactVelInitialized = false;
 static bool normalEstimateInitialized = false;
+static bool normalMetricsInitialized = false;
 
 static float wrapAngleDeg180(const float angleDeg);
 
@@ -175,6 +181,13 @@ static void vec3Scale(float out[3], const float in[3], const float scale)
   out[2] = in[2] * scale;
 }
 
+static void vec3Sub(float out[3], const float a[3], const float b[3])
+{
+  out[0] = a[0] - b[0];
+  out[1] = a[1] - b[1];
+  out[2] = a[2] - b[2];
+}
+
 static void vec3Cross(float out[3], const float a[3], const float b[3])
 {
   out[0] = a[1] * b[2] - a[2] * b[1];
@@ -236,8 +249,16 @@ static void resetNormalEstimator(void)
   filteredContactVelWorld[0] = 0.0f;
   filteredContactVelWorld[1] = 0.0f;
   filteredContactVelWorld[2] = 0.0f;
+  previousNormalEstimateWorld[0] = normalEstimateWorld[0];
+  previousNormalEstimateWorld[1] = normalEstimateWorld[1];
+  previousNormalEstimateWorld[2] = normalEstimateWorld[2];
+  omegaNRaw = 0.0f;
+  omegaNLpf = 0.0f;
+  normalVelocityLeakageRaw = 0.0f;
+  normalVelocityLeakageLpf = 0.0f;
   filteredContactVelInitialized = false;
   normalEstimateInitialized = false;
+  normalMetricsInitialized = false;
 }
 
 static void getEstimatedNormalWorld(float outNormal[3])
@@ -369,6 +390,31 @@ static void updateNormalEstimator(void)
 
   vec3Copy(normalEstimateWorld, candidate);
   normalEstimateInitialized = true;
+
+  const float cutoffHz = SU_NORMAL_PROJ_VEL_LPF_HZ;
+  const float tau = 1.0f / (2.0f * (float)M_PI * cutoffHz);
+  const float alpha = dt / (tau + dt);
+
+  float normalDerivative[3] = {0.0f, 0.0f, 0.0f};
+  if (normalMetricsInitialized) {
+    vec3Sub(normalDerivative, normalEstimateWorld, previousNormalEstimateWorld);
+    vec3Scale(normalDerivative, normalDerivative, 1.0f / dt);
+  }
+  omegaNRaw = vec3Norm(normalDerivative);
+
+  const float velocityNorm = vec3Norm(filteredContactVelWorld);
+  normalVelocityLeakageRaw = fabsf(
+    vec3Dot(normalEstimateWorld, filteredContactVelWorld) / (velocityNorm + 1.0e-6f));
+
+  if (!normalMetricsInitialized) {
+    omegaNLpf = omegaNRaw;
+    normalVelocityLeakageLpf = normalVelocityLeakageRaw;
+    normalMetricsInitialized = true;
+  } else {
+    omegaNLpf += alpha * (omegaNRaw - omegaNLpf);
+    normalVelocityLeakageLpf += alpha * (normalVelocityLeakageRaw - normalVelocityLeakageLpf);
+  }
+  vec3Copy(previousNormalEstimateWorld, normalEstimateWorld);
 }
 
 static void buildContactFrame(const float normalWorld[3], float t1World[3], float t2World[3])
@@ -643,4 +689,9 @@ LOG_ADD(LOG_FLOAT, nPostZ, &normalProjectedCandidateWorld[2])
 LOG_ADD(LOG_FLOAT, nEstX, &normalEstimateWorld[0])
 LOG_ADD(LOG_FLOAT, nEstY, &normalEstimateWorld[1])
 LOG_ADD(LOG_FLOAT, nEstZ, &normalEstimateWorld[2])
+LOG_ADD(LOG_FLOAT, vEeX, &filteredContactVelWorld[0])
+LOG_ADD(LOG_FLOAT, vEeY, &filteredContactVelWorld[1])
+LOG_ADD(LOG_FLOAT, vEeZ, &filteredContactVelWorld[2])
+LOG_ADD(LOG_FLOAT, omgN, &omegaNLpf)
+LOG_ADD(LOG_FLOAT, nVelLeak, &normalVelocityLeakageLpf)
 LOG_GROUP_STOP(suPosRef)
