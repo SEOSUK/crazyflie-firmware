@@ -552,6 +552,9 @@ LOG_ADD(LOG_FLOAT, f1, &su_motor_thrust_n[0])           // N, motor 1 thrust com
 LOG_ADD(LOG_FLOAT, f2, &su_motor_thrust_n[1])           // N, motor 2 thrust command (pre-battery-comp, pre-cap)
 LOG_ADD(LOG_FLOAT, f3, &su_motor_thrust_n[2])           // N, motor 3 thrust command (pre-battery-comp, pre-cap)
 LOG_ADD(LOG_FLOAT, f4, &su_motor_thrust_n[3])           // N, motor 4 thrust command (pre-battery-comp, pre-cap)
+LOG_ADD(LOG_FLOAT, tauInBx, &su_body_torque_nm[0])      // N*m, body-frame input torque including CoM-offset contribution
+LOG_ADD(LOG_FLOAT, tauInBy, &su_body_torque_nm[1])      // N*m, body-frame input torque including CoM-offset contribution
+LOG_ADD(LOG_FLOAT, tauInBz, &su_body_torque_nm[2])      // N*m, body-frame input torque including CoM-offset contribution
 
 LOG_ADD(LOG_FLOAT, stateVx, &su_state_vel_world[0])     // m/s, world frame state.velocity
 LOG_ADD(LOG_FLOAT, stateVy, &su_state_vel_world[1])     // m/s, world frame state.velocity
