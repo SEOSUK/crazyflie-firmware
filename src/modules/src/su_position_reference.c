@@ -35,6 +35,9 @@ static float omegaNRaw = 0.0f;
 static float omegaNLpf = 0.0f;
 static float normalVelocityLeakageRaw = 0.0f;
 static float normalVelocityLeakageLpf = 0.0f;
+static float alphaFrameLog = 1.0f;
+static float tangentialCmd1DesLog = 0.0f;
+static float tangentialCmd2DesLog = 0.0f;
 static bool filteredContactVelInitialized = false;
 static bool normalEstimateInitialized = false;
 static bool normalMetricsInitialized = false;
@@ -441,9 +444,32 @@ static void buildContactFrame(const float normalWorld[3], float t1World[3], floa
   }
 }
 
+static float computeAlphaFrame(void)
+{
+  const float alphaMin = fminf(fmaxf(su_alpha_frame_min, 0.0f), 1.0f);
+  const float alphaBar = su_alpha_frame_bar;
+  const float alphaRange = 1.0f - alphaMin;
+  const float alphaBarAbs = fabsf(alphaBar);
+
+  if (alphaRange <= 0.0f || alphaBarAbs <= 1.0e-6f) {
+    return 1.0f;
+  }
+
+  const float metric = (alphaBar > 0.0f) ? omegaNLpf : normalVelocityLeakageLpf;
+  const float ratio = metric / alphaBarAbs;
+  return alphaMin + alphaRange / (1.0f + ratio * ratio);
+}
+
 static void applyTangentialVelocityControl(float velocityCmdWorld[3])
 {
-  if (!velocityCmdWorld || !isContactFrameControlEnabled()) {
+  if (!velocityCmdWorld) {
+    return;
+  }
+
+  if (!isContactFrameControlEnabled()) {
+    alphaFrameLog = 1.0f;
+    tangentialCmd1DesLog = velocityCmdWorld[1];
+    tangentialCmd2DesLog = velocityCmdWorld[2];
     return;
   }
 
@@ -455,8 +481,12 @@ static void applyTangentialVelocityControl(float velocityCmdWorld[3])
   buildContactFrame(normalWorld, t1World, t2World);
 
   const float normalCoeff = velocityCmdWorld[0];
-  const float tangentialCoeff1 = velocityCmdWorld[1];
-  const float tangentialCoeff2 = velocityCmdWorld[2];
+  const float alphaFrame = computeAlphaFrame();
+  const float tangentialCoeff1 = alphaFrame * velocityCmdWorld[1];
+  const float tangentialCoeff2 = alphaFrame * velocityCmdWorld[2];
+  alphaFrameLog = alphaFrame;
+  tangentialCmd1DesLog = tangentialCoeff1;
+  tangentialCmd2DesLog = tangentialCoeff2;
 
   float remappedVelocity[3];
   remappedVelocity[0] = -normalCoeff * normalWorld[0] +
@@ -548,6 +578,9 @@ void suPositionReferenceInit(void)
   referenceBaseYawDeg = 0.0f;
   referenceYawCorrectionDeg = 0.0f;
   referenceYawDegLog = 0.0f;
+  alphaFrameLog = 1.0f;
+  tangentialCmd1DesLog = 0.0f;
+  tangentialCmd2DesLog = 0.0f;
   lastPositionMode = SU_POSITION_MODE_POSITION;
   lastTrajectoryMode = SU_TRAJECTORY_NONE;
   lastCommandReference = SU_COMMAND_REFERENCE_END_EFFECTOR;
@@ -694,4 +727,7 @@ LOG_ADD(LOG_FLOAT, vEeY, &filteredContactVelWorld[1])
 LOG_ADD(LOG_FLOAT, vEeZ, &filteredContactVelWorld[2])
 LOG_ADD(LOG_FLOAT, omgN, &omegaNLpf)
 LOG_ADD(LOG_FLOAT, nVelLeak, &normalVelocityLeakageLpf)
+LOG_ADD(LOG_FLOAT, alphaFrm, &alphaFrameLog)
+LOG_ADD(LOG_FLOAT, t1CmdDes, &tangentialCmd1DesLog)
+LOG_ADD(LOG_FLOAT, t2CmdDes, &tangentialCmd2DesLog)
 LOG_GROUP_STOP(suPosRef)
