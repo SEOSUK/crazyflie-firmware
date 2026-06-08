@@ -35,7 +35,6 @@ float su_g_nv             = 2.0f;        // normal velocity damping gain
 float su_nu_n_bar         = 0.08f;       // [m/s] symmetric saturation of normal velocity command
 float su_epsilon_f_min    = 0.005f;      // [N] lower threshold where yaw-alignment smoothing starts
 float su_epsilon_f_max    = 0.010f;      // [N] upper threshold where yaw-alignment smoothing saturates
-float su_yaw_force_lpf_hz = 2.0f;        // [Hz] LPF cutoff for force-direction yaw alignment
 
 static void suZeroBiasCallback(void)
 {
@@ -82,5 +81,4 @@ PARAM_ADD(PARAM_FLOAT, preloadGv,       &su_g_nv)
 PARAM_ADD(PARAM_FLOAT, preloadNu,       &su_nu_n_bar)
 PARAM_ADD(PARAM_FLOAT, epsilonFMin,     &su_epsilon_f_min)
 PARAM_ADD(PARAM_FLOAT, epsilonFMax,     &su_epsilon_f_max)
-PARAM_ADD(PARAM_FLOAT, yawForceLpfHz,   &su_yaw_force_lpf_hz)
 PARAM_GROUP_STOP(su_position)

@@ -24,8 +24,6 @@ static uint8_t lastTrajectoryMode = SU_TRAJECTORY_NONE;
 static uint8_t lastCommandReference = SU_COMMAND_REFERENCE_END_EFFECTOR;
 static point_t trajectoryLocalOffsetPrev;
 static bool trajectoryLocalOffsetInitialized = false;
-static float filteredForceWorldXY[2] = {0.0f, 0.0f};
-static bool filteredForceInitialized = false;
 static float referenceYawDegLog = 0.0f;
 static float normalEstimatorMatrix[3][3];
 static float normalForceEvidenceWorld[3] = {-1.0f, 0.0f, 0.0f};
@@ -435,9 +433,11 @@ static bool isPreloadVelocityControlActive(const uint8_t positionMode,
          fabsf(forceDesired) > 1e-6f;
 }
 
-static void applyPreloadVelocityControl(float velocityCmdWorld[3], const float forceDesired)
+static void applyPreloadVelocityControl(float velocityCmdWorld[3],
+                                        const state_t *state,
+                                        const float forceDesired)
 {
-  if (!velocityCmdWorld) {
+  if (!velocityCmdWorld || !state) {
     return;
   }
 
@@ -448,7 +448,12 @@ static void applyPreloadVelocityControl(float velocityCmdWorld[3], const float f
   suWrenchObserverGetWorldForce(worldForce);
 
   const float f_n = vec3Dot(normalWorld, worldForce);
-  const float r_v = vec3Dot(normalWorld, velocityCmdWorld);
+  const float stateVelocityWorld[3] = {
+    state->velocity.x,
+    state->velocity.y,
+    state->velocity.z,
+  };
+  const float r_v = vec3Dot(normalWorld, stateVelocityWorld);
   const float nu_n = clampSymmetric(
     su_g_nf * (forceDesired - f_n) + su_g_nv * r_v,
     su_nu_n_bar);
@@ -458,78 +463,16 @@ static void applyPreloadVelocityControl(float velocityCmdWorld[3], const float f
   velocityCmdWorld[2] -= nu_n * normalWorld[2];
 }
 
-static void resetFilteredForce(void)
-{
-  filteredForceWorldXY[0] = 0.0f;
-  filteredForceWorldXY[1] = 0.0f;
-  filteredForceInitialized = false;
-}
-
 static void updateYawFromMobForce(void)
 {
-  if (su_yaw_force_lpf_hz < 0.0f) {
+  if (!isNormalEstimatorEnabled()) {
     referenceYawCorrectionDeg = 0.0f;
     return;
   }
 
-  float worldForce[3] = {0.0f, 0.0f, 0.0f};
-  suWrenchObserverGetWorldForce(worldForce);
-
-  float targetDirXY[2] = {0.0f, 0.0f};
-  const float rawFx = worldForce[0];
-  const float rawFy = worldForce[1];
-
-  if (isNormalEstimatorEnabled()) {
-    float normalWorld[3];
-    getEstimatedNormalWorld(normalWorld);
-    const float rawNormalDirXY[2] = {-normalWorld[0], -normalWorld[1]};
-    const float rawNormalDirNormXY = sqrtf(rawNormalDirXY[0] * rawNormalDirXY[0] +
-                                           rawNormalDirXY[1] * rawNormalDirXY[1]);
-    if (rawNormalDirNormXY <= 1.0e-6f) {
-      referenceYawCorrectionDeg = 0.0f;
-      return;
-    }
-
-    if (!filteredForceInitialized) {
-      filteredForceWorldXY[0] = rawNormalDirXY[0];
-      filteredForceWorldXY[1] = rawNormalDirXY[1];
-      filteredForceInitialized = true;
-    } else if (su_yaw_force_lpf_hz == 0.0f) {
-      filteredForceWorldXY[0] = rawNormalDirXY[0];
-      filteredForceWorldXY[1] = rawNormalDirXY[1];
-    } else {
-      const float dt = 1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ;
-      const float cutoffHz = su_yaw_force_lpf_hz;
-      const float tau = 1.0f / (2.0f * (float)M_PI * cutoffHz);
-      const float alpha = dt / (tau + dt);
-
-      filteredForceWorldXY[0] += alpha * (rawNormalDirXY[0] - filteredForceWorldXY[0]);
-      filteredForceWorldXY[1] += alpha * (rawNormalDirXY[1] - filteredForceWorldXY[1]);
-    }
-
-    targetDirXY[0] = filteredForceWorldXY[0];
-    targetDirXY[1] = filteredForceWorldXY[1];
-  } else {
-    if (!filteredForceInitialized) {
-      filteredForceWorldXY[0] = rawFx;
-      filteredForceWorldXY[1] = rawFy;
-      filteredForceInitialized = true;
-    } else if (su_yaw_force_lpf_hz == 0.0f) {
-      filteredForceWorldXY[0] = rawFx;
-      filteredForceWorldXY[1] = rawFy;
-    } else {
-      const float dt = 1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ;
-      const float cutoffHz = su_yaw_force_lpf_hz;
-      const float tau = 1.0f / (2.0f * (float)M_PI * cutoffHz);
-      const float alpha = dt / (tau + dt);
-
-      filteredForceWorldXY[0] += alpha * (rawFx - filteredForceWorldXY[0]);
-      filteredForceWorldXY[1] += alpha * (rawFy - filteredForceWorldXY[1]);
-    }
-
-    targetDirXY[0] = -filteredForceWorldXY[0];
-    targetDirXY[1] = -filteredForceWorldXY[1];
-  }
+  float normalWorld[3];
+  getEstimatedNormalWorld(normalWorld);
+  const float targetDirXY[2] = {-normalWorld[0], -normalWorld[1]};
 
   const float targetDirNormXY = sqrtf(targetDirXY[0] * targetDirXY[0] +
                                       targetDirXY[1] * targetDirXY[1]);
@@ -566,7 +509,6 @@ void suPositionReferenceInit(void)
   trajectoryLocalOffsetPrev.y = 0.0f;
   trajectoryLocalOffsetPrev.z = 0.0f;
   trajectoryLocalOffsetInitialized = false;
-  resetFilteredForce();
   resetNormalEstimator();
 
   suPositionTriggerInit();
@@ -605,14 +547,12 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
     referenceBaseYawDeg = wrapAngleDeg180(setpoint->attitude.yaw);
     referenceYawCorrectionDeg = 0.0f;
     suTrajectoryGeneratorDeactivate();
-    resetFilteredForce();
     writeReferenceToSetpoint(setpoint, commandReference);
   } else {
     referenceBaseYawDeg = wrapAngleDeg180(setpoint->attitude.yaw);
     const float velocityReferenceYawDeg = getReferenceYawDeg();
 
     if (lastPositionMode == SU_POSITION_MODE_POSITION) {
-      resetFilteredForce();
       trajectoryLocalOffsetInitialized = false;
       if (trajectoryMode != SU_TRAJECTORY_NONE) {
         suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, velocityReferenceYawDeg);
@@ -641,7 +581,7 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
         };
         applyTangentialVelocityControl(velocityCmdWorld);
         if (isPreloadVelocityControlActive(positionMode, forceDesired)) {
-          applyPreloadVelocityControl(velocityCmdWorld, forceDesired);
+          applyPreloadVelocityControl(velocityCmdWorld, state, forceDesired);
         }
         referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
         referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
@@ -672,7 +612,7 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
 
         applyTangentialVelocityControl(velocityCmdWorld);
         if (isPreloadVelocityControlActive(positionMode, forceDesired)) {
-          applyPreloadVelocityControl(velocityCmdWorld, forceDesired);
+          applyPreloadVelocityControl(velocityCmdWorld, state, forceDesired);
         }
 
         referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
