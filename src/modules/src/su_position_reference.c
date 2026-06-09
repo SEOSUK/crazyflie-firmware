@@ -238,6 +238,11 @@ static bool isContactFrameControlEnabled(void)
   return isNormalEstimatorEnabled();
 }
 
+static bool isAdvancedVelocityControlMode(const uint8_t positionMode)
+{
+  return positionMode == SU_POSITION_MODE_VELOCITY;
+}
+
 static void resetNormalEstimator(void)
 {
   for (int row = 0; row < 3; ++row) {
@@ -352,14 +357,18 @@ static void updateNormalEstimator(void)
     }
   }
 
-  const float epsilonG = clampPositive(su_normal_epsilon_g);
-  const float velNormSq = vec3Dot(filteredContactVelWorld, filteredContactVelWorld);
-  const float velProjScale = vec3Dot(filteredContactVelWorld, qf) / (velNormSq + epsilonG);
-
   float qg[3];
-  qg[0] = qf[0] - filteredContactVelWorld[0] * velProjScale;
-  qg[1] = qf[1] - filteredContactVelWorld[1] * velProjScale;
-  qg[2] = qf[2] - filteredContactVelWorld[2] * velProjScale;
+  if (su_normal_epsilon_g <= 0.0f) {
+    vec3Copy(qg, qf);
+  } else {
+    const float epsilonG = clampPositive(su_normal_epsilon_g);
+    const float velNormSq = vec3Dot(filteredContactVelWorld, filteredContactVelWorld);
+    const float velProjScale = vec3Dot(filteredContactVelWorld, qf) / (velNormSq + epsilonG);
+
+    qg[0] = qf[0] - filteredContactVelWorld[0] * velProjScale;
+    qg[1] = qf[1] - filteredContactVelWorld[1] * velProjScale;
+    qg[2] = qf[2] - filteredContactVelWorld[2] * velProjScale;
+  }
 
   float nRaw[3];
   if (!vec3Normalize(nRaw, qg, 1e-6f)) {
@@ -610,102 +619,108 @@ void suPositionReferenceUpdateSetpoint(setpoint_t *setpoint, const state_t *stat
   const uint8_t trajectoryMode = suPositionTriggerGetTrajectoryMode();
   const uint8_t commandReference = suPositionTriggerGetCommandReference();
   const float forceDesired = suPositionTriggerGetForceDesired();
+  const bool advancedVelocityControlEnabled = isAdvancedVelocityControlMode(positionMode);
   const float currentReferenceYawDeg = getReferenceYawDeg();
   if (commandReference != lastCommandReference) {
     convertReferencePosition(&referencePosition, lastCommandReference, commandReference, currentReferenceYawDeg);
   }
 
-  if (positionMode == SU_POSITION_MODE_POSITION) {
-    if (lastPositionMode == SU_POSITION_MODE_VELOCITY) {
-      point_t commandFramePosition = referencePosition;
-      setpoint->position = commandFramePosition;
-      setpoint->attitude.yaw = currentReferenceYawDeg;
-    }
+  referenceBaseYawDeg = wrapAngleDeg180(setpoint->attitude.yaw);
 
-    referencePosition = setpoint->position;
-    referenceBaseYawDeg = wrapAngleDeg180(setpoint->attitude.yaw);
+  if (positionMode != lastPositionMode) {
+    trajectoryLocalOffsetInitialized = false;
     referenceYawCorrectionDeg = 0.0f;
-    suTrajectoryGeneratorDeactivate();
-    writeReferenceToSetpoint(setpoint, commandReference);
-  } else {
-    referenceBaseYawDeg = wrapAngleDeg180(setpoint->attitude.yaw);
-    const float velocityReferenceYawDeg = getReferenceYawDeg();
-
-    if (lastPositionMode == SU_POSITION_MODE_POSITION) {
-      trajectoryLocalOffsetInitialized = false;
-      if (trajectoryMode != SU_TRAJECTORY_NONE) {
-        suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, velocityReferenceYawDeg);
-      } else {
-        suTrajectoryGeneratorDeactivate();
-      }
+    if (!advancedVelocityControlEnabled) {
+      suTrajectoryGeneratorDeactivate();
+      resetNormalEstimator();
     }
+  }
 
-    if (trajectoryMode != lastTrajectoryMode) {
-      trajectoryLocalOffsetInitialized = false;
-      if (trajectoryMode == SU_TRAJECTORY_NONE) {
-        suTrajectoryGeneratorDeactivate();
-      } else {
-        suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, velocityReferenceYawDeg);
-      }
+  const float velocityReferenceYawDeg = getReferenceYawDeg();
+  if (advancedVelocityControlEnabled && lastPositionMode == SU_POSITION_MODE_POSITION) {
+    if (trajectoryMode != SU_TRAJECTORY_NONE) {
+      suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, velocityReferenceYawDeg);
+    } else {
+      suTrajectoryGeneratorDeactivate();
     }
+  }
 
+  if (advancedVelocityControlEnabled && trajectoryMode != lastTrajectoryMode) {
+    trajectoryLocalOffsetInitialized = false;
     if (trajectoryMode == SU_TRAJECTORY_NONE) {
       suTrajectoryGeneratorDeactivate();
-      if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
-        updateNormalEstimator();
-        float velocityCmdWorld[3] = {
-          setpoint->position.x,
-          setpoint->position.y,
-          setpoint->position.z,
-        };
-        applyTangentialVelocityControl(velocityCmdWorld);
-        if (isPreloadVelocityControlActive(positionMode, forceDesired)) {
-          applyPreloadVelocityControl(velocityCmdWorld, state, forceDesired);
-        }
-        referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.z += velocityCmdWorld[2] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        updateYawFromMobForce();
-      }
     } else {
-      if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+      suTrajectoryGeneratorStart(trajectoryMode, &referencePosition, velocityReferenceYawDeg);
+    }
+  }
+
+  if (!advancedVelocityControlEnabled) {
+    suTrajectoryGeneratorDeactivate();
+  }
+
+  if (trajectoryMode == SU_TRAJECTORY_NONE || !advancedVelocityControlEnabled) {
+    if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+      float velocityCmdWorld[3] = {
+        setpoint->position.x,
+        setpoint->position.y,
+        setpoint->position.z,
+      };
+      if (advancedVelocityControlEnabled) {
         updateNormalEstimator();
-        point_t trajectoryLocalOffset = {0.0f, 0.0f, 0.0f};
-        float trajectoryYawDeg = velocityReferenceYawDeg;
-        suTrajectoryGeneratorUpdateLocalOffset(
-          trajectoryMode, stabilizerStep, &trajectoryLocalOffset, &trajectoryYawDeg);
-
-        float velocityCmdWorld[3] = {
-          0.0f,
-          0.0f,
-          0.0f,
-        };
-
-        if (trajectoryLocalOffsetInitialized) {
-          const float dt = 1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ;
-          velocityCmdWorld[1] = (trajectoryLocalOffset.y - trajectoryLocalOffsetPrev.y) / dt;
-          velocityCmdWorld[2] = (trajectoryLocalOffset.z - trajectoryLocalOffsetPrev.z) / dt;
-        }
-        trajectoryLocalOffsetPrev = trajectoryLocalOffset;
-        trajectoryLocalOffsetInitialized = true;
-
         applyTangentialVelocityControl(velocityCmdWorld);
         if (isPreloadVelocityControlActive(positionMode, forceDesired)) {
           applyPreloadVelocityControl(velocityCmdWorld, state, forceDesired);
         }
-
-        referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referencePosition.z += velocityCmdWorld[2] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
-        referenceBaseYawDeg = wrapAngleDeg180(trajectoryYawDeg);
       }
-      if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+
+      referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+      referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+      referencePosition.z += velocityCmdWorld[2] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+
+      if (advancedVelocityControlEnabled) {
         updateYawFromMobForce();
+      } else {
+        referenceYawCorrectionDeg = 0.0f;
       }
     }
+  } else {
+    if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+      updateNormalEstimator();
+      point_t trajectoryLocalOffset = {0.0f, 0.0f, 0.0f};
+      float trajectoryYawDeg = velocityReferenceYawDeg;
+      suTrajectoryGeneratorUpdateLocalOffset(
+        trajectoryMode, stabilizerStep, &trajectoryLocalOffset, &trajectoryYawDeg);
 
-    writeReferenceToSetpoint(setpoint, commandReference);
+      float velocityCmdWorld[3] = {
+        0.0f,
+        0.0f,
+        0.0f,
+      };
+
+      if (trajectoryLocalOffsetInitialized) {
+        const float dt = 1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ;
+        velocityCmdWorld[1] = (trajectoryLocalOffset.y - trajectoryLocalOffsetPrev.y) / dt;
+        velocityCmdWorld[2] = (trajectoryLocalOffset.z - trajectoryLocalOffsetPrev.z) / dt;
+      }
+      trajectoryLocalOffsetPrev = trajectoryLocalOffset;
+      trajectoryLocalOffsetInitialized = true;
+
+      applyTangentialVelocityControl(velocityCmdWorld);
+      if (isPreloadVelocityControlActive(positionMode, forceDesired)) {
+        applyPreloadVelocityControl(velocityCmdWorld, state, forceDesired);
+      }
+
+      referencePosition.x += velocityCmdWorld[0] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+      referencePosition.y += velocityCmdWorld[1] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+      referencePosition.z += velocityCmdWorld[2] * (1.0f / (float)SU_POSITION_VELOCITY_RATE_HZ);
+      referenceBaseYawDeg = wrapAngleDeg180(trajectoryYawDeg);
+    }
+    if (RATE_DO_EXECUTE(SU_POSITION_VELOCITY_RATE_HZ, stabilizerStep)) {
+      updateYawFromMobForce();
+    }
   }
+
+  writeReferenceToSetpoint(setpoint, commandReference);
 
   lastPositionMode = positionMode;
   lastTrajectoryMode = trajectoryMode;
