@@ -13,7 +13,7 @@
 #define SU_RAD2DEG (180.0f / (float)M_PI)
 #define SU_YAW_ALIGN_SAT_DEG 70.0f
 #define SU_NORMAL_EST_EIG_ITERS 6
-#define SU_NORMAL_PROJ_VEL_LPF_HZ 1.0f
+#define SU_NORMAL_PROJ_VEL_LPF_HZ 0.4f
 
 static bool referenceInitialized = false;
 static point_t referencePosition;
@@ -414,9 +414,8 @@ static void updateNormalEstimator(void)
   }
   omegaNRaw = vec3Norm(normalDerivative);
 
-  const float velocityNorm = vec3Norm(filteredContactVelWorld);
   normalVelocityLeakageRaw = fabsf(
-    vec3Dot(normalEstimateWorld, filteredContactVelWorld) / (velocityNorm + 1.0e-6f));
+    vec3Dot(normalEstimateWorld, filteredContactVelWorld));
 
   if (!normalMetricsInitialized) {
     omegaNLpf = omegaNRaw;
