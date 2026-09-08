@@ -24,6 +24,7 @@ static uint16_t su_motor_pwm_ratio[4];
 static float su_body_force_n[3];
 static float su_world_force_n[3];
 static float su_body_torque_nm[3];
+static float su_world_torque_nm[3];
 
 static float su_state_vel_world[3];
 static float su_vel_from_pos_world[3];
@@ -187,6 +188,7 @@ void suWrenchObserverInit(void)
     su_body_force_n[i] = 0.0f;
     su_world_force_n[i] = 0.0f;
     su_body_torque_nm[i] = 0.0f;
+    su_world_torque_nm[i] = 0.0f;
     su_state_vel_world[i] = 0.0f;
     su_vel_from_pos_world[i] = 0.0f;
     su_state_acc_world_mps2[i] = 0.0f;
@@ -227,22 +229,25 @@ void suWrenchObserverInit(void)
 }
 
 void suWrenchObserverUpdate(const state_t *state,
-                            const motors_thrust_uncapped_t *motorThrustUncapped,
+                            const motors_thrust_uncapped_t *motorThrustReq,
                             const motors_thrust_pwm_t *motorPwm,
                             const Axis3f *gyro_deg_s,
                             const float vel_from_pos_world[3],
                             float dt)
 {
-  if (!state || !motorThrustUncapped || !motorPwm) {
+  if (!state || !motorThrustReq || !motorPwm) {
     return;
   }
   const float thrust_to_n = THRUST_MAX / (float)UINT16_MAX;
   const float gravity_world[3] = {0.0f, 0.0f, -su_mass * 9.81f};
 
-  const float f1 = thrust_to_n * (float)motorThrustUncapped->motors.m1;
-  const float f2 = thrust_to_n * (float)motorThrustUncapped->motors.m2;
-  const float f3 = thrust_to_n * (float)motorThrustUncapped->motors.m3;
-  const float f4 = thrust_to_n * (float)motorThrustUncapped->motors.m4;
+  const float f1 = thrust_to_n * (float)motorThrustReq->motors.m1;
+  const float f2 = thrust_to_n * (float)motorThrustReq->motors.m2;
+  const float f3 = thrust_to_n * (float)motorThrustReq->motors.m3;
+  const float f4 = thrust_to_n * (float)motorThrustReq->motors.m4;
+
+  // NOTE: motorThrustReq is the battery-compensated uncapped request value,
+  // matching the same raw PWM-scale quantity exposed as motor.m1req..m4req.
 
   su_motor_thrust_n[0] = sanitizeFinite(f1);
   su_motor_thrust_n[1] = sanitizeFinite(f2);
@@ -298,6 +303,8 @@ void suWrenchObserverUpdate(const state_t *state,
 
   mat3MulVec(su_world_force_n, R, su_body_force_n);
   sanitizeVec3(su_world_force_n);
+  mat3MulVec(su_world_torque_nm, R, su_body_torque_nm);
+  sanitizeVec3(su_world_torque_nm);
 
   su_state_vel_world[0] = sanitizeFinite(state->velocity.x);
   su_state_vel_world[1] = sanitizeFinite(state->velocity.y);
@@ -456,6 +463,50 @@ void suWrenchObserverGetWorldForce(float outF[3])
   outF[0] = su_force_l_hat_world[0];
   outF[1] = su_force_l_hat_world[1];
   outF[2] = su_force_l_hat_world[2];
+}
+
+void suWrenchObserverGetWorldTorque(float outTau[3])
+{
+  if (!outTau) {
+    return;
+  }
+
+  outTau[0] = su_torque_l_out_world[0];
+  outTau[1] = su_torque_l_out_world[1];
+  outTau[2] = su_torque_l_out_world[2];
+}
+
+void suWrenchObserverGetWorldInputForce(float outF[3])
+{
+  if (!outF) {
+    return;
+  }
+
+  outF[0] = su_world_force_n[0];
+  outF[1] = su_world_force_n[1];
+  outF[2] = su_world_force_n[2];
+}
+
+void suWrenchObserverGetWorldInputTorque(float outTau[3])
+{
+  if (!outTau) {
+    return;
+  }
+
+  outTau[0] = su_world_torque_nm[0];
+  outTau[1] = su_world_torque_nm[1];
+  outTau[2] = su_world_torque_nm[2];
+}
+
+void suWrenchObserverGetContactOffsetWorld(float outR[3])
+{
+  if (!outR) {
+    return;
+  }
+
+  outR[0] = su_r_offset_world_m[0];
+  outR[1] = su_r_offset_world_m[1];
+  outR[2] = su_r_offset_world_m[2];
 }
 
 void suWrenchObserverGetStateVelocityWorld(float outV[3])
