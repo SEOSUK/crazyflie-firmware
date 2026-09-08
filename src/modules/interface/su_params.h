@@ -50,8 +50,6 @@ extern float su_normal_epsilon_f; // [N] minimum force evidence norm
 extern float su_g_nf;             // [m/(s*N)] gain from normal force tracking error
 extern float su_g_nv;             // [-] gain from normal velocity leakage
 extern float su_nu_n_bar;         // [m/s] symmetric saturation limit for normal velocity command
-extern float su_alpha_frame_min;  // [0..1] minimum tangential command gating factor
-extern float su_alpha_frame_bar;  // [+] omega_n bar, [-] normal_velocity_leakage bar, 0 disables gating
 extern float su_epsilon_f_min;    // [N] lower threshold where force-aligned yaw smoothing starts
 extern float su_epsilon_f_max;    // [N] upper threshold where force-aligned yaw reaches full weight
 

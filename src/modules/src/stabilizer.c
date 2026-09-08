@@ -58,6 +58,7 @@
 #include "rateSupervisor.h"
 
 #include "su_wrench_observer.h" // SEUK
+#include "su_thrust_effectiveness.h"
 #include "su_position_reference.h"
 #include "su_vel_from_pos.h"
 
@@ -204,6 +205,7 @@ void stabilizerInit(StateEstimatorType estimator)
   suVelFromPosInit();  
   suPositionReferenceInit();
   suWrenchObserverInit(); // SEUK MOB
+  suThrustEffectivenessInit();
 
   isInit = true;
 }
@@ -393,8 +395,10 @@ static void stabilizerTask(void* param)
         float velFromPosWorld[3];
         suVelFromPosGetWorld(velFromPosWorld);
 
-        suWrenchObserverUpdate(&state, &motorThrustUncapped, &motorPwm, &sensorData.gyro,
+        suWrenchObserverUpdate(&state, &motorThrustBatCompUncapped, &motorPwm, &sensorData.gyro,
                                velFromPosWorld, 1.0f / (float)SU_WRENCH_RATE_HZ);
+        suThrustEffectivenessUpdate(&state, &motorThrustBatCompUncapped, &sensorData.gyro,
+                                   velFromPosWorld, 1.0f / (float)SU_WRENCH_RATE_HZ);
       }      // Compute compressed log formats      
 
       // Compute compressed log formats

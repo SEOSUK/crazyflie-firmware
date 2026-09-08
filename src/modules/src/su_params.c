@@ -33,8 +33,6 @@ float su_normal_epsilon_f = 0.01f;       // [N] minimum force evidence norm
 float su_g_nf             = 1.0f;        // normal force tracking gain
 float su_g_nv             = 2.0f;        // normal velocity damping gain
 float su_nu_n_bar         = 0.08f;       // [m/s] symmetric saturation of normal velocity command
-float su_alpha_frame_min  = 1.0f;        // [0..1] minimum tangential command gating factor
-float su_alpha_frame_bar  = 0.0f;        // [+] omega_n bar, [-] normal_velocity_leakage bar, 0 disables gating
 float su_epsilon_f_min    = 0.005f;      // [N] lower threshold where yaw-alignment smoothing starts
 float su_epsilon_f_max    = 0.010f;      // [N] upper threshold where yaw-alignment smoothing saturates
 
@@ -81,8 +79,6 @@ PARAM_ADD(PARAM_FLOAT, normEpsF,        &su_normal_epsilon_f)
 PARAM_ADD(PARAM_FLOAT, preloadGf,       &su_g_nf)
 PARAM_ADD(PARAM_FLOAT, preloadGv,       &su_g_nv)
 PARAM_ADD(PARAM_FLOAT, preloadNu,       &su_nu_n_bar)
-PARAM_ADD(PARAM_FLOAT, alphaMin,        &su_alpha_frame_min)
-PARAM_ADD(PARAM_FLOAT, alphaBar,        &su_alpha_frame_bar)
 PARAM_ADD(PARAM_FLOAT, epsilonFMin,     &su_epsilon_f_min)
 PARAM_ADD(PARAM_FLOAT, epsilonFMax,     &su_epsilon_f_max)
 PARAM_GROUP_STOP(su_position)
